@@ -168,6 +168,23 @@ def event_summary(payload: dict[str, Any]) -> str:
     )
 
 
+def web_profile_summary(payload: dict[str, Any]) -> str:
+    socials = payload.get("socials") or payload.get("redesSociales") or {}
+    if isinstance(socials, dict):
+        social_text = " · ".join(f"{key}: {value}" for key, value in socials.items() if value)
+    else:
+        social_text = str(socials)
+    lines = [event_summary(payload)]
+    for label, key in (("Región", "region"), ("Disponibilidad", "availability"), ("Discord ID", "discordUserId")):
+        if payload.get(key):
+            lines.append(f"**{label}:** {payload[key]}")
+    if social_text:
+        lines.append(f"**Redes:** {social_text}")
+    if payload.get("bio") or payload.get("description"):
+        lines.append(f"**Descripción:** {payload.get('bio') or payload.get('description')}")
+    return "\n".join(lines)
+
+
 async def move_member_to_interview_voice(payload: dict[str, Any]) -> str:
     discord_id = str(payload.get("discordUserId") or "").strip()
     if not discord_id.isdigit():
@@ -192,9 +209,24 @@ async def move_member_to_interview_voice(payload: dict[str, Any]) -> str:
 
 
 async def deliver_web_event(event: dict[str, Any]) -> None:
-    event_type = str(event.get("eventType") or "")
-    payload = json.loads(str(event.get("payload") or "{}"))
-    if event_type == "clip_uploaded":
+    event_type = str(event.get('eventType') or "")
+    payload = json.loads(str(event.get('payload') or "{}"))
+    if event_type in {"application_submitted", "application_created", "profile_updated", "player_profile_updated"}:
+        channel = bot.get_channel(REVISION_CHANNEL_ID)
+        if not channel:
+            raise RuntimeError(f"No encuentro REVISION_CHANNEL_ID={REVISION_CHANNEL_ID}")
+        image_path = await create_welcome_card(
+            payload,
+            payload.get("photoUrl") or payload.get("foto_url") or payload.get("avatarUrl"),
+            approved=False,
+        )
+        title = "📝 **NUEVA POSTULACIÓN DESDE LA WEB**" if "application" in event_type else "🔄 **PERFIL ACTUALIZADO DESDE LA WEB**"
+        await channel.send(
+            f"{title}\n{web_profile_summary(payload)}",
+            file=discord.File(image_path) if image_path else None,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+    elif event_type == "clip_uploaded":
         channel = bot.get_channel(CLIPS_CHANNEL_ID)
         if not channel:
             raise RuntimeError(f"No encuentro CLIPS_CHANNEL_ID={CLIPS_CHANNEL_ID}")
