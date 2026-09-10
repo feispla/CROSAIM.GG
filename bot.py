@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 from typing import Any
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
+import aiohttp
 from dotenv import load_dotenv
 
 from image_generator import create_welcome_card
@@ -18,6 +20,10 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 POSTULACION_CHANNEL_ID = int(os.getenv("POSTULACION_CHANNEL_ID", "0"))
 REVISION_CHANNEL_ID = int(os.getenv("REVISION_CHANNEL_ID", "0"))
 APROBACION_CHANNEL_ID = int(os.getenv("APROBACION_CHANNEL_ID", "0"))
+CLIPS_CHANNEL_ID = int(os.getenv("CLIPS_CHANNEL_ID", "1546651682383855627"))
+INTERVIEW_VOICE_CHANNEL_ID = int(os.getenv("INTERVIEW_VOICE_CHANNEL_ID", "1546641332632817689"))
+CROSAIM_WEB_BASE_URL = os.getenv("CROSAIM_WEB_BASE_URL", "https://crosaimdash-h9bxzuxs.manus.space").rstrip("/")
+CROSAIM_BOT_SYNC_SECRET = os.getenv("CROSAIM_BOT_SYNC_SECRET", "")
 # Optional: leave empty to accept any webhook message arriving in the postulation channel.
 POSTULACION_WEBHOOK_ID = int(os.getenv("POSTULACION_WEBHOOK_ID", "0") or "0")
 if not TOKEN:
@@ -97,6 +103,115 @@ def find_player_mention(data: dict[str, Any], content: str) -> str | None:
     return None
 
 
+async def acknowledge_web_event(event_id: int, ok: bool, error: str | None = None) -> None:
+    if not CROSAIM_BOT_SYNC_SECRET:
+        raise RuntimeError("Falta CROSAIM_BOT_SYNC_SECRET")
+    payload = {"ok": ok}
+    if error:
+        payload["error"] = error[:500]
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{CROSAIM_WEB_BASE_URL}/api/discord/events/{event_id}/ack",
+            headers={"x-crosaim-sync-secret": CROSAIM_BOT_SYNC_SECRET},
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            if response.status >= 300:
+                raise RuntimeError(f"ack HTTP {response.status}")
+
+
+def event_mention(payload: dict[str, Any]) -> str:
+    discord_id = str(payload.get("discordUserId") or "").strip()
+    return f"<@{discord_id}>" if discord_id.isdigit() else f"**{payload.get('discordUsername') or 'Jugador'}**"
+
+
+def event_summary(payload: dict[str, Any]) -> str:
+    return (
+        f"**Jugador:** {payload.get('playerName') or 'No indicado'}\n"
+        f"**Discord:** {payload.get('discordUsername') or 'No indicado'}\n"
+        f"**Rol:** {payload.get('role') or 'No indicado'} · **Rango:** {payload.get('rank') or 'No indicado'}"
+    )
+
+
+async def deliver_web_event(event: dict[str, Any]) -> None:
+    event_type = str(event.get("eventType") or "")
+    payload = json.loads(str(event.get("payload") or "{}"))
+    if event_type == "clip_uploaded":
+        channel = bot.get_channel(CLIPS_CHANNEL_ID)
+        if not channel:
+            raise RuntimeError(f"No encuentro CLIPS_CHANNEL_ID={CLIPS_CHANNEL_ID}")
+        await channel.send(
+            f"**NUEVO CLIP CROSAIM**\n**Archivo:** {payload.get('name', 'clip')}\n"
+            f"**Tamaño:** {float(payload.get('size', 0)) / (1024 * 1024):.1f} MB\n"
+            f"**Abrir clip:** {payload.get('url', '')}",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+    elif event_type == "application_interview":
+        channel = bot.get_channel(INTERVIEW_VOICE_CHANNEL_ID)
+        mention = event_mention(payload)
+        text = f"🎙️ **ENTREVISTA CROSAIM**\n{mention}\n{event_summary(payload)}\nEntra al canal de voz: <#{INTERVIEW_VOICE_CHANNEL_ID}>"
+        if channel and hasattr(channel, "send"):
+            await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
+        else:
+            fallback = bot.get_channel(REVISION_CHANNEL_ID) or bot.get_channel(POSTULACION_CHANNEL_ID)
+            if not fallback:
+                raise RuntimeError("No encuentro canal de aviso para entrevista")
+            await fallback.send(text, allowed_mentions=discord.AllowedMentions(users=True))
+    elif event_type == "application_approved":
+        channel = bot.get_channel(APROBACION_CHANNEL_ID)
+        if not channel:
+            raise RuntimeError(f"No encuentro APROBACION_CHANNEL_ID={APROBACION_CHANNEL_ID}")
+        await channel.send(f"✅ **POSTULACIÓN APROBADA DESDE CROSAIM**\n{event_mention(payload)}\n{event_summary(payload)}", allowed_mentions=discord.AllowedMentions(users=True))
+    elif event_type == "application_rejected":
+        channel = bot.get_channel(REVISION_CHANNEL_ID)
+        if not channel:
+            raise RuntimeError(f"No encuentro REVISION_CHANNEL_ID={REVISION_CHANNEL_ID}")
+        await channel.send(f"❌ **Postulación rechazada desde el panel**\n{event_summary(payload)}", allowed_mentions=discord.AllowedMentions.none())
+    elif event_type == "roster_tryout":
+        channel = bot.get_channel(APROBACION_CHANNEL_ID) or bot.get_channel(REVISION_CHANNEL_ID)
+        if not channel:
+            raise RuntimeError("No encuentro canal para avisar el tryout")
+        await channel.send(f"🟣 **NUEVO TRYOUT EN PLANTILLA**\n{event_summary(payload)}", allowed_mentions=discord.AllowedMentions.none())
+    else:
+        raise RuntimeError(f"Tipo de evento no soportado: {event_type}")
+
+
+@tasks.loop(seconds=8)
+async def poll_web_events() -> None:
+    if not CROSAIM_BOT_SYNC_SECRET:
+        return
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{CROSAIM_WEB_BASE_URL}/api/discord/events",
+                headers={"x-crosaim-sync-secret": CROSAIM_BOT_SYNC_SECRET},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as response:
+                if response.status != 200:
+                    logging.warning("Web event polling returned HTTP %s", response.status)
+                    return
+                events = await response.json()
+        for event in events[:20]:
+            event_id = int(event["id"])
+            try:
+                await deliver_web_event(event)
+                await acknowledge_web_event(event_id, True)
+                logging.info("Evento web %s entregado en Discord", event_id)
+            except Exception as error:
+                logging.exception("No se pudo entregar evento web %s", event_id)
+                try:
+                    await acknowledge_web_event(event_id, False, str(error))
+                except Exception:
+                    logging.exception("No se pudo confirmar fallo del evento %s", event_id)
+    except Exception:
+        logging.exception("Error consultando eventos de CROSAIM")
+
+
+@poll_web_events.before_loop
+async def before_poll_web_events() -> None:
+    await bot.wait_until_ready()
+
+
 def approval_description(data: dict[str, Any]) -> str:
     name = value(data, "nombre", "name", default="Jugador")
     role = value(data, "rol", "role")
@@ -154,7 +269,9 @@ class ReviewView(discord.ui.View):
 @bot.event
 async def on_ready():
     logging.info("Conectado como %s (%s)", bot.user, bot.user.id if bot.user else "?")
-    logging.info("Canales: postulacion=%s revision=%s aprobacion=%s", POSTULACION_CHANNEL_ID, REVISION_CHANNEL_ID, APROBACION_CHANNEL_ID)
+    logging.info("Canales: postulacion=%s revision=%s aprobacion=%s clips=%s entrevista=%s", POSTULACION_CHANNEL_ID, REVISION_CHANNEL_ID, APROBACION_CHANNEL_ID, CLIPS_CHANNEL_ID, INTERVIEW_VOICE_CHANNEL_ID)
+    if not poll_web_events.is_running():
+        poll_web_events.start()
 
 
 @bot.event
