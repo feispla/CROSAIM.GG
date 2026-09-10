@@ -1,0 +1,18 @@
+{
+  "eventType": "application_submitted",
+  "payload": {
+    "playerName": "RazeOne",
+    "discordUserId": "123456789012345678",
+    "discordUsername": "RazeOne",
+    "role": "Duelista",
+    "rank": "Diamante",
+    "region": "LATAM",
+    "availability": "Noches",
+    "socials": {
+      "twitch": "https://twitch.tv/ejemplo",
+      "youtube": "https://youtube.com/@ejemplo"
+    },
+    "applicationId": "uuid-de-la-postulacion",
+    "profileVersion": 1
+  }
+}

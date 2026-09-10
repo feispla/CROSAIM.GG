@@ -23,3 +23,16 @@ El bot puede consultar la cola protegida de eventos del panel y publicar en Disc
 Cuando una postulación pasa a entrevista, el bot menciona al candidato y, si el usuario ya está conectado a un canal de voz y el bot tiene el permiso **Mover miembros** con una posición superior en la jerarquía, lo mueve a `𝑽𝑨𝑳𝑶𝑹𝑨𝑵𝑻`. Discord no permite mover automáticamente a un usuario que todavía no está conectado a voz; en ese caso el bot deja el aviso y el enlace del canal.
 
 Las postulaciones recibidas desde el canal configurado se sincronizan con el panel mediante el ID del mensaje de Discord. Esto evita duplicados cuando Railway reintenta el proceso. La imagen de bienvenida se genera con el nombre, rol y rango reales del jugador al aprobarlo.
+
+## Integración web, perfiles y Discord
+
+La documentación reutilizable está organizada en estos archivos:
+
+- `WEB_INTEGRATION_GUIDE.md`: flujo de Manus OAuth, conexión Discord y endpoints.
+- `supabase_profile_schema.sql`: migración versionada para perfiles, cuentas Discord y eventos.
+- `examples/application_submitted.json`: payload oficial de una postulación web.
+- `SYNC_CONTRACT.md`: contrato de eventos, ACK y reintentos.
+- `ARQUITECTURA_CROSAIM.md`: arquitectura completa de GitHub, Railway, bot, web y Supabase.
+- `skills/crosaim-discord-supabase-sync/SKILL.md`: habilidad reutilizable para otra cuenta de Manus.
+
+La migración SQL debe revisarse contra el esquema real de la web antes de ejecutarse en Supabase. GitHub guarda la migración y la documentación; Supabase guarda los datos. La tarjeta gráfica no se genera para eventos normales de perfiles o postulaciones.
