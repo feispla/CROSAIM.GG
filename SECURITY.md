@@ -2,49 +2,116 @@
 
 ## Supported Versions
 
-Actualmente, CrosAim mantiene soporte de seguridad para la versión activa del bot.
+Actualmente, CrosAim recibe soporte de seguridad para la versión más reciente disponible.
 
 | Version | Supported |
 | ------- | --------- |
-| Latest  | :white_check_mark: |
-| Older   | :x: |
+| Latest | ✅ |
+| Older versions | ❌ |
 
-Las actualizaciones de seguridad se aplican principalmente a la versión más reciente de CrosAim.
+Se recomienda mantener CrosAim actualizado para recibir las últimas correcciones y mejoras de seguridad.
+
+---
 
 ## Reporting a Vulnerability
 
-Si encuentras una vulnerabilidad de seguridad en CrosAim, por favor repórtala de forma responsable y evita publicar los detalles públicamente hasta que el problema haya sido revisado.
+La seguridad de CrosAim es importante para nosotros. Si encuentras una vulnerabilidad de seguridad, un comportamiento que pueda comprometer la seguridad del bot o cualquier otro problema relacionado con la protección de datos, agradeceríamos que lo reportaras de forma responsable.
 
-### Cómo reportar una vulnerabilidad
+### 📧 Por correo electrónico
 
-Puedes informar de una vulnerabilidad mediante los canales oficiales de soporte de CrosAim o mediante una comunicación privada al equipo responsable del proyecto.
+Puedes enviar el reporte a:
 
-Al realizar el reporte, incluye:
+**feispla@zohomail.com**
 
-- Descripción del problema.
-- Pasos para reproducirlo.
-- Impacto potencial.
-- Capturas de pantalla o información técnica relevante, si corresponde.
-- Cualquier solución temporal que hayas identificado.
+Incluye, si es posible:
 
-### Qué puedes esperar
+- Descripción detallada de la vulnerabilidad.
+- Pasos necesarios para reproducir el problema.
+- Comandos, funciones o sistemas afectados.
+- Capturas de pantalla o evidencias relevantes.
+- Impacto potencial de la vulnerabilidad.
+- Cualquier solución o recomendación que consideres útil.
 
-El equipo de CrosAim intentará revisar los reportes de seguridad lo antes posible.
+### 💬 Por Discord
 
-Si la vulnerabilidad es confirmada:
+También puedes comunicarte con el equipo de CrosAim mediante nuestro servidor oficial:
 
-1. Se investigará el problema.
-2. Se determinará su impacto.
-3. Se desarrollará una solución cuando sea necesario.
-4. Se implementará una actualización de seguridad.
-5. Se informará al reportante cuando el problema haya sido solucionado, cuando sea apropiado.
+**Servidor oficial de CrosAim:**  
+https://discord.gg/9MKHk6aJvk
 
-Si el reporte no corresponde a una vulnerabilidad de seguridad o no puede ser reproducido, podremos solicitar información adicional o cerrar el reporte explicando el motivo.
+Para vulnerabilidades que puedan exponer información sensible, recomendamos utilizar principalmente el correo electrónico.
+
+---
 
 ## Responsible Disclosure
 
-Solicitamos que las vulnerabilidades se mantengan privadas mientras son investigadas y solucionadas. No realices pruebas que puedan afectar a otros usuarios, servidores de Discord, datos o disponibilidad del servicio.
+Solicitamos que las vulnerabilidades sean reportadas de manera responsable y privada antes de hacerlas públicas.
 
-Agradecemos a todas las personas que informen responsablemente de problemas de seguridad y ayuden a mantener CrosAim seguro.
+Por favor:
 
-**CrosAim — Gaming & Esports**
+- No explotes una vulnerabilidad más allá de lo necesario para demostrar el problema.
+- No accedas, modifiques o elimines información que no te pertenezca.
+- No interrumpas intencionalmente los servicios de CrosAim.
+- No realices ataques contra otros usuarios o servidores.
+- No publiques detalles de una vulnerabilidad antes de que podamos investigarla y solucionarla.
+
+Nuestro objetivo es trabajar de buena fe con las personas que reporten problemas de seguridad.
+
+---
+
+## What Happens After a Report
+
+Después de recibir un reporte:
+
+1. Revisaremos la información proporcionada.
+2. Intentaremos reproducir y verificar el problema.
+3. Evaluaremos el impacto y la gravedad.
+4. Trabajaremos en una solución cuando sea necesario.
+5. Publicaremos una corrección o actualización cuando corresponda.
+
+El tiempo de respuesta puede variar dependiendo de la gravedad y complejidad del problema.
+
+---
+
+## Security Best Practices
+
+Los usuarios y administradores que utilicen CrosAim deberían:
+
+- Mantener el bot y sus componentes actualizados.
+- Utilizar permisos de Discord únicamente cuando sean necesarios.
+- Revisar periódicamente los permisos otorgados al bot.
+- No compartir tokens, credenciales o claves privadas.
+- Utilizar contraseñas y credenciales seguras para sus propias cuentas.
+- Informar inmediatamente cualquier comportamiento sospechoso.
+
+---
+
+## Scope
+
+Esta política se aplica principalmente a:
+
+- El bot de Discord CrosAim.
+- Sistemas y servicios oficiales relacionados con CrosAim.
+- Funciones y componentes desarrollados y mantenidos por el equipo de CrosAim.
+
+Los servicios externos, plataformas de terceros o sistemas que no sean administrados por CrosAim pueden estar sujetos a sus propias políticas de seguridad.
+
+---
+
+## Privacy
+
+CrosAim busca manejar la información de los usuarios de forma responsable.
+
+No solicitamos contraseñas de Discord, tokens de usuario ni información de tarjetas bancarias.
+
+Para obtener más información sobre el tratamiento de datos, consulta nuestra Política de Privacidad.
+
+---
+
+## Contact
+
+**Proyecto:** CrosAim  
+**Contacto de seguridad:** feispla@zohomail.com  
+**Discord oficial:** https://discord.gg/9MKHk6aJvk
+
+Gracias a todas las personas que ayudan a mantener CrosAim seguro. ❤️
