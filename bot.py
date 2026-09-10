@@ -38,23 +38,43 @@ def value(data: dict[str, Any], *keys: str, default: str = "Por confirmar") -> s
 
 def parse_submission(message: discord.Message) -> dict[str, Any]:
     data: dict[str, Any] = {"texto": message.content or ""}
+
+    def normalize_key(raw_key: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", raw_key.lower()).strip()
+
+    def store_field(raw_key: str, raw_value: str) -> None:
+        key = normalize_key(raw_key)
+        value_text = str(raw_value).strip()
+        if not value_text:
+            return
+        data[key] = value_text
+        aliases = {
+            "jugador": "nombre", "player": "nombre", "nombre": "nombre",
+            "nombre del jugador": "nombre", "name": "nombre", "usuario": "nombre",
+            "rol": "rol", "role": "rol", "posicion": "rol", "posición": "rol",
+            "rango": "rango", "rank": "rango", "elo": "rango",
+            "discord id": "discord_id", "id discord": "discord_id",
+            "discord_id": "discord_id", "id": "discord_id",
+        }
+        if key in aliases:
+            data.setdefault(aliases[key], value_text)
+
+    def parse_labeled_text(text: str) -> None:
+        for line in (text or "").splitlines():
+            match = re.match(r"\s*(?:[-•*]\s*)?([^:：\-]{2,40})\s*[:：\-]\s*(.+?)\s*$", line)
+            if match:
+                store_field(match.group(1), match.group(2))
+
     for embed in message.embeds:
         if embed.title:
             data.setdefault("titulo", embed.title)
+            parse_labeled_text(embed.title)
         if embed.description:
             data.setdefault("descripcion", embed.description)
+            parse_labeled_text(embed.description)
         for field in embed.fields:
-            key = field.name.strip().lower()
-            data[key] = field.value
-            # Normalize common labels received from form/webhook embeds.
-            if key in {"jugador", "player", "nombre", "nombre del jugador", "name"}:
-                data.setdefault("nombre", field.value)
-            elif key in {"rol", "role", "posición", "posicion"}:
-                data.setdefault("rol", field.value)
-            elif key in {"rango", "rank", "elo"}:
-                data.setdefault("rango", field.value)
-            elif key in {"discord id", "id discord", "discord_id", "id"}:
-                data.setdefault("discord_id", field.value)
+            store_field(field.name, field.value)
+            parse_labeled_text(field.value)
         if embed.image and embed.image.url:
             data.setdefault("foto_url", embed.image.url)
         if embed.thumbnail and embed.thumbnail.url:
@@ -62,6 +82,7 @@ def parse_submission(message: discord.Message) -> dict[str, Any]:
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith("image/"):
             data.setdefault("foto_url", attachment.url)
+    parse_labeled_text(message.content or "")
     return data
 
 
