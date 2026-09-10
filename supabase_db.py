@@ -20,6 +20,19 @@ def client() -> Client:
     return _client
 
 
+def find_submission_by_message(message_id: int) -> dict[str, Any] | None:
+    """Busca una postulación ya creada para un mensaje de Discord."""
+    result = (
+        client()
+        .table("postulaciones")
+        .select("id, estado, discord_revision_message_id, discord_aprobacion_message_id")
+        .eq("discord_postulacion_message_id", str(message_id))
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
 def save_submission(data: dict[str, Any], webhook_message_id: int | None = None, webhook_id: int | None = None) -> str:
     row = {
         "nombre": str(data.get("nombre") or data.get("name") or "Jugador"),

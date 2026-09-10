@@ -85,6 +85,7 @@ async def create_welcome_card(data: dict[str, Any], photo_url: str | None, appro
         canvas.alpha_composite(_cover(player, (780, 780)), (570, 690))
 
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)[:50]
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output = OUTPUT_DIR / f"{safe or 'jugador'}_{'aprobada' if approved else 'revision'}.png"
     canvas.convert("RGB").save(output, "PNG", optimize=True)
     return output

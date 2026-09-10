@@ -12,7 +12,7 @@ import aiohttp
 from dotenv import load_dotenv
 
 from image_generator import create_welcome_card
-from supabase_db import save_submission, set_review_message, set_status
+from supabase_db import find_submission_by_message, save_submission, set_review_message, set_status
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -349,8 +349,21 @@ async def on_message(message: discord.Message):
     data = parse_submission(message)
     submission_id: str | None = None
     try:
+        existing = find_submission_by_message(message.id)
+        if existing:
+            logging.warning("Postulación duplicada ignorada: message_id=%s submission_id=%s", message.id, existing["id"])
+            return
         submission_id = save_submission(data, webhook_message_id=message.id, webhook_id=message.webhook_id)
     except Exception:
+        # El índice único cubre la carrera entre dos entregas simultáneas.
+        # Si otra entrega ganó, no se debe publicar una segunda revisión.
+        try:
+            existing = find_submission_by_message(message.id)
+        except Exception:
+            existing = None
+        if existing:
+            logging.warning("Postulación duplicada detectada tras inserción: message_id=%s", message.id)
+            return
         logging.exception("Supabase falló; se continuará enviando la postulación a revisión")
     try:
         await sync_application_to_web(data, message)

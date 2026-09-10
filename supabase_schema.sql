@@ -26,6 +26,10 @@ create table if not exists public.postulaciones (
 create index if not exists postulaciones_estado_idx on public.postulaciones (estado);
 create index if not exists postulaciones_discord_id_idx on public.postulaciones (discord_id);
 create index if not exists postulaciones_created_at_idx on public.postulaciones (created_at desc);
+-- Idempotencia: un mismo mensaje de Discord solo puede crear una postulación.
+create unique index if not exists postulaciones_discord_message_unique_idx
+  on public.postulaciones (discord_postulacion_message_id)
+  where discord_postulacion_message_id is not null;
 
 alter table public.postulaciones enable row level security;
 
