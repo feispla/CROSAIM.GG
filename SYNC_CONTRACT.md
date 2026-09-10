@@ -16,8 +16,10 @@ La API de la web debe devolver eventos pendientes desde `GET /api/discord/events
 
 El bot publica en `REVISION_CHANNEL_ID` los siguientes tipos:
 
-- `application_submitted` o `application_created`: nueva postulación web, con tarjeta y datos del jugador.
+- `application_submitted` o `application_created`: nueva postulación web, con datos del jugador.
 - `profile_updated` o `player_profile_updated`: cambios de foto, redes, rol, rango, región, disponibilidad o descripción.
+
+La tarjeta gráfica no es un evento ni un requisito de sincronización. Es un recurso visual opcional para una bienvenida o aprobación. Las actualizaciones web se envían como texto y enlaces para evitar generar imágenes innecesarias.
 
 También mantiene los eventos existentes `application_interview`, `application_approved`, `application_rejected`, `roster_tryout` y `clip_uploaded`.
 

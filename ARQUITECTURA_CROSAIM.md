@@ -80,14 +80,14 @@ Supabase guarda la postulación y el evento
     ↓
 bot.py consulta GET /api/discord/events
     ↓
-bot.py publica tarjeta y datos en REVISION_CHANNEL_ID
+    bot.py publica datos en REVISION_CHANNEL_ID
     ↓
 bot.py confirma POST /api/discord/events/{id}/ack
     ↓
 Supabase marca el evento como entregado
 ```
 
-Los eventos de perfil utilizan el mismo mecanismo. Los tipos admitidos por el bot son `application_submitted`, `application_created`, `profile_updated` y `player_profile_updated`.
+Los eventos de perfil utilizan el mismo mecanismo. Los tipos admitidos por el bot son `application_submitted`, `application_created`, `profile_updated` y `player_profile_updated`. La tarjeta gráfica no es un evento: es un recurso visual opcional para una aprobación o bienvenida.
 
 ## 6. Flujo de actualización del perfil
 
@@ -128,9 +128,9 @@ La web no debe reemplazar Manus OAuth hasta confirmar cómo están almacenados l
 - Detectar postulaciones duplicadas.
 - Guardar postulaciones en Supabase.
 - Sincronizar postulaciones de Discord con la web.
-- Publicar tarjetas de revisión.
+- Publicar datos de revisión.
 - Procesar botones de aprobación y rechazo.
-- Generar tarjetas de bienvenida con Pillow.
+- Generar tarjetas de bienvenida con Pillow únicamente cuando se aprueba o se necesita un anuncio visual.
 - Consultar periódicamente los eventos pendientes de la web.
 - Publicar entrevistas, clips, tryouts y actualizaciones de perfiles.
 - Confirmar eventos entregados o fallidos.
