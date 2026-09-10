@@ -57,7 +57,7 @@ def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
 
 
 async def create_welcome_card(data: dict[str, Any], photo_url: str | None, approved: bool = False) -> Path | None:
-    name = str(data.get("nombre") or data.get("name") or "NOMBRE DEL JUGADOR").strip().upper()
+    name = str(data.get("nombre") or data.get("name") or data.get("playerName") or "NOMBRE DEL JUGADOR").strip().upper()
     role = str(data.get("rol") or data.get("role") or "ROL").strip().upper()
     rank = str(data.get("rango") or data.get("rank") or "RANGO").strip().upper()
     status = "APROBADA" if approved else "EN REVISIÓN"

@@ -19,9 +19,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 POSTULACION_CHANNEL_ID = int(os.getenv("POSTULACION_CHANNEL_ID", "0"))
 REVISION_CHANNEL_ID = int(os.getenv("REVISION_CHANNEL_ID", "0"))
+GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 APROBACION_CHANNEL_ID = int(os.getenv("APROBACION_CHANNEL_ID", "0"))
 CLIPS_CHANNEL_ID = int(os.getenv("CLIPS_CHANNEL_ID", "1546651682383855627"))
 INTERVIEW_VOICE_CHANNEL_ID = int(os.getenv("INTERVIEW_VOICE_CHANNEL_ID", "1546641332632817689"))
+INTERVIEW_NOTICE_CHANNEL_ID = int(os.getenv("INTERVIEW_NOTICE_CHANNEL_ID", "0"))
 CROSAIM_WEB_BASE_URL = os.getenv("CROSAIM_WEB_BASE_URL", "https://crosaimdash-h9bxzuxs.manus.space").rstrip("/")
 CROSAIM_BOT_SYNC_SECRET = os.getenv("CROSAIM_BOT_SYNC_SECRET", "")
 # Optional: leave empty to accept any webhook message arriving in the postulation channel.
@@ -61,6 +63,10 @@ def parse_submission(message: discord.Message) -> dict[str, Any]:
             "rango": "rango", "rank": "rango", "elo": "rango",
             "discord id": "discord_id", "id discord": "discord_id",
             "discord_id": "discord_id", "id": "discord_id",
+            "discord": "discord_username", "discord username": "discord_username",
+            "usuario de discord": "discord_username", "nombre de discord": "discord_username",
+            "contacto": "contact", "contact": "contact",
+            "mensaje": "mensaje", "message": "mensaje",
         }
         if key in aliases:
             data.setdefault(aliases[key], value_text)
@@ -103,6 +109,35 @@ def find_player_mention(data: dict[str, Any], content: str) -> str | None:
     return None
 
 
+async def sync_application_to_web(data: dict[str, Any], message: discord.Message) -> None:
+    if not CROSAIM_BOT_SYNC_SECRET:
+        logging.warning("No se sincroniza la postulación web: falta CROSAIM_BOT_SYNC_SECRET")
+        return
+    discord_id = str(data.get("discord_id") or "").strip()
+    mention = re.search(r"<@!?(\d{15,22})>", message.content or "")
+    if not discord_id and mention:
+        discord_id = mention.group(1)
+    payload = {
+        "discordMessageId": str(message.id),
+        "playerName": value(data, "nombre", "name", default="Jugador"),
+        "discordUsername": value(data, "discord_username", "usuario de discord", "discord", default=message.author.name),
+        "discordUserId": discord_id or None,
+        "contact": value(data, "contact", "contacto", default=""),
+        "role": value(data, "rol", "role", default="Por confirmar"),
+        "rank": value(data, "rango", "rank", default="Por confirmar"),
+        "message": value(data, "mensaje", "message", "descripcion", "texto", default="Postulación recibida desde Discord."),
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{CROSAIM_WEB_BASE_URL}/api/discord/applications",
+            headers={"x-crosaim-sync-secret": CROSAIM_BOT_SYNC_SECRET},
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            if response.status >= 300:
+                raise RuntimeError(f"web application sync HTTP {response.status}: {await response.text()}")
+
+
 async def acknowledge_web_event(event_id: int, ok: bool, error: str | None = None) -> None:
     if not CROSAIM_BOT_SYNC_SECRET:
         raise RuntimeError("Falta CROSAIM_BOT_SYNC_SECRET")
@@ -133,6 +168,29 @@ def event_summary(payload: dict[str, Any]) -> str:
     )
 
 
+async def move_member_to_interview_voice(payload: dict[str, Any]) -> str:
+    discord_id = str(payload.get("discordUserId") or "").strip()
+    if not discord_id.isdigit():
+        return "No se pudo mover automáticamente: falta un ID de Discord válido."
+    guild = bot.get_guild(GUILD_ID) if GUILD_ID else None
+    voice_channel = bot.get_channel(INTERVIEW_VOICE_CHANNEL_ID)
+    if not guild or not isinstance(voice_channel, discord.VoiceChannel):
+        return "No se pudo mover automáticamente: canal o servidor no disponible."
+    try:
+        member = guild.get_member(int(discord_id)) or await guild.fetch_member(int(discord_id))
+        if not member.voice or not member.voice.channel:
+            return "El candidato debe entrar primero a un canal de voz para poder moverlo."
+        await member.move_to(voice_channel, reason="Candidato CROSAIM pasó a entrevista")
+        return f"Candidato movido a <#{INTERVIEW_VOICE_CHANNEL_ID}>."
+    except discord.Forbidden:
+        return "Falta el permiso Mover miembros o el bot está debajo del candidato en la jerarquía."
+    except discord.NotFound:
+        return "El ID de Discord no pertenece a un miembro de este servidor."
+    except Exception as error:
+        logging.exception("No se pudo mover al candidato al canal de entrevista")
+        return f"No se pudo mover automáticamente: {error}"
+
+
 async def deliver_web_event(event: dict[str, Any]) -> None:
     event_type = str(event.get("eventType") or "")
     payload = json.loads(str(event.get("payload") or "{}"))
@@ -147,21 +205,20 @@ async def deliver_web_event(event: dict[str, Any]) -> None:
             allowed_mentions=discord.AllowedMentions.none(),
         )
     elif event_type == "application_interview":
-        channel = bot.get_channel(INTERVIEW_VOICE_CHANNEL_ID)
+        notice_channel = bot.get_channel(INTERVIEW_NOTICE_CHANNEL_ID) if INTERVIEW_NOTICE_CHANNEL_ID else None
+        notice_channel = notice_channel or bot.get_channel(REVISION_CHANNEL_ID) or bot.get_channel(POSTULACION_CHANNEL_ID)
+        if not notice_channel:
+            raise RuntimeError("No encuentro canal de aviso para entrevista")
+        move_result = await move_member_to_interview_voice(payload)
         mention = event_mention(payload)
-        text = f"🎙️ **ENTREVISTA CROSAIM**\n{mention}\n{event_summary(payload)}\nEntra al canal de voz: <#{INTERVIEW_VOICE_CHANNEL_ID}>"
-        if channel and hasattr(channel, "send"):
-            await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
-        else:
-            fallback = bot.get_channel(REVISION_CHANNEL_ID) or bot.get_channel(POSTULACION_CHANNEL_ID)
-            if not fallback:
-                raise RuntimeError("No encuentro canal de aviso para entrevista")
-            await fallback.send(text, allowed_mentions=discord.AllowedMentions(users=True))
+        text = f"🎙️ **ENTREVISTA CROSAIM**\n{mention}\n{event_summary(payload)}\n**Voz:** {move_result}\nCanal objetivo: <#{INTERVIEW_VOICE_CHANNEL_ID}>"
+        await notice_channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
     elif event_type == "application_approved":
         channel = bot.get_channel(APROBACION_CHANNEL_ID)
         if not channel:
             raise RuntimeError(f"No encuentro APROBACION_CHANNEL_ID={APROBACION_CHANNEL_ID}")
-        await channel.send(f"✅ **POSTULACIÓN APROBADA DESDE CROSAIM**\n{event_mention(payload)}\n{event_summary(payload)}", allowed_mentions=discord.AllowedMentions(users=True))
+        image_path = await create_welcome_card(payload, payload.get("photoUrl") or payload.get("foto_url"), approved=True)
+        await channel.send(content=f"✅ **POSTULACIÓN APROBADA DESDE CROSAIM**\n{event_mention(payload)}\n{event_summary(payload)}", file=discord.File(image_path) if image_path else None, allowed_mentions=discord.AllowedMentions(users=True))
     elif event_type == "application_rejected":
         channel = bot.get_channel(REVISION_CHANNEL_ID)
         if not channel:
@@ -269,7 +326,7 @@ class ReviewView(discord.ui.View):
 @bot.event
 async def on_ready():
     logging.info("Conectado como %s (%s)", bot.user, bot.user.id if bot.user else "?")
-    logging.info("Canales: postulacion=%s revision=%s aprobacion=%s clips=%s entrevista=%s", POSTULACION_CHANNEL_ID, REVISION_CHANNEL_ID, APROBACION_CHANNEL_ID, CLIPS_CHANNEL_ID, INTERVIEW_VOICE_CHANNEL_ID)
+    logging.info("Canales: postulacion=%s revision=%s aprobacion=%s clips=%s entrevista=%s aviso_entrevista=%s guild=%s", POSTULACION_CHANNEL_ID, REVISION_CHANNEL_ID, APROBACION_CHANNEL_ID, CLIPS_CHANNEL_ID, INTERVIEW_VOICE_CHANNEL_ID, INTERVIEW_NOTICE_CHANNEL_ID, GUILD_ID)
     if not poll_web_events.is_running():
         poll_web_events.start()
 
@@ -295,6 +352,10 @@ async def on_message(message: discord.Message):
         submission_id = save_submission(data, webhook_message_id=message.id, webhook_id=message.webhook_id)
     except Exception:
         logging.exception("Supabase falló; se continuará enviando la postulación a revisión")
+    try:
+        await sync_application_to_web(data, message)
+    except Exception:
+        logging.exception("La postulación llegó a Discord, pero no se pudo reflejar en la web")
     player = find_player_mention(data, message.content)
     path = await create_welcome_card(data, data.get("foto_url"), approved=False)
     summary = "**Nueva postulación para revisión**\n"
