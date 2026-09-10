@@ -18,7 +18,8 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 POSTULACION_CHANNEL_ID = int(os.getenv("POSTULACION_CHANNEL_ID", "0"))
 REVISION_CHANNEL_ID = int(os.getenv("REVISION_CHANNEL_ID", "0"))
 APROBACION_CHANNEL_ID = int(os.getenv("APROBACION_CHANNEL_ID", "0"))
-POSTULACION_WEBHOOK_ID = int(os.getenv("POSTULACION_WEBHOOK_ID", "0"))
+# Optional: leave empty to accept any webhook message arriving in the postulation channel.
+POSTULACION_WEBHOOK_ID = int(os.getenv("POSTULACION_WEBHOOK_ID", "0") or "0")
 if not TOKEN:
     raise RuntimeError("Falta DISCORD_BOT_TOKEN en .env")
 intents = discord.Intents.default()
@@ -43,7 +44,17 @@ def parse_submission(message: discord.Message) -> dict[str, Any]:
         if embed.description:
             data.setdefault("descripcion", embed.description)
         for field in embed.fields:
-            data[field.name.strip().lower()] = field.value
+            key = field.name.strip().lower()
+            data[key] = field.value
+            # Normalize common labels received from form/webhook embeds.
+            if key in {"jugador", "player", "nombre", "nombre del jugador", "name"}:
+                data.setdefault("nombre", field.value)
+            elif key in {"rol", "role", "posición", "posicion"}:
+                data.setdefault("rol", field.value)
+            elif key in {"rango", "rank", "elo"}:
+                data.setdefault("rango", field.value)
+            elif key in {"discord id", "id discord", "discord_id", "id"}:
+                data.setdefault("discord_id", field.value)
         if embed.image and embed.image.url:
             data.setdefault("foto_url", embed.image.url)
         if embed.thumbnail and embed.thumbnail.url:
@@ -72,9 +83,7 @@ def approval_description(data: dict[str, Any]) -> str:
     return (
         f"¡Bienvenido al roster, {name}!\n\n"
         f"Nos complace anunciar oficialmente la incorporación de {name} a CROSAIM.\n\n"
-        f"**Rol:** {role}\n"
-        f"**Rango:** {rank}\n"
-        f"**Estado:** Aprobado\n\n"
+        f"**Rol:** {role}\n**Rango:** {rank}\n**Estado:** Aprobado\n\n"
         "A partir de ahora forma parte de nuestra familia competitiva. "
         "Le deseamos muchos éxitos, grandes partidas y el mejor desempeño "
         "representando los colores de CROSAIM.\n\n"
@@ -83,7 +92,7 @@ def approval_description(data: dict[str, Any]) -> str:
 
 
 class ReviewView(discord.ui.View):
-    def __init__(self, data: dict[str, Any], player_mention: str | None, submission_id: str):
+    def __init__(self, data: dict[str, Any], player_mention: str | None, submission_id: str | None):
         super().__init__(timeout=None)
         self.data, self.player_mention, self.submission_id = data, player_mention, submission_id
 
@@ -97,11 +106,12 @@ class ReviewView(discord.ui.View):
         path = await create_welcome_card(self.data, self.data.get("foto_url"), approved=True)
         content = f"{self.player_mention}\n" if self.player_mention else ""
         content += approval_description(self.data)
-        approval_message = await channel.send(
-            content=content,
-            file=discord.File(path) if path else None,
-        )
-        set_status(self.submission_id, "aprobada", interaction.user.id, approval_message_id=approval_message.id)
+        approval_message = await channel.send(content=content, file=discord.File(path) if path else None)
+        if self.submission_id:
+            try:
+                set_status(self.submission_id, "aprobada", interaction.user.id, approval_message_id=approval_message.id)
+            except Exception:
+                logging.exception("No se pudo actualizar Supabase tras aprobar")
         for child in self.children:
             child.disabled = True
         await interaction.message.edit(view=self)
@@ -109,8 +119,12 @@ class ReviewView(discord.ui.View):
 
     @discord.ui.button(label="Rechazar", style=discord.ButtonStyle.danger, custom_id="crosaim:reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        set_status(self.submission_id, "rechazada", interaction.user.id, reason="Rechazada desde el canal de revisión")
-        await interaction.response.send_message("Postulación rechazada. Puedes escribir el motivo en este canal.", ephemeral=True)
+        if self.submission_id:
+            try:
+                set_status(self.submission_id, "rechazada", interaction.user.id, reason="Rechazada desde el canal de revisión")
+            except Exception:
+                logging.exception("No se pudo actualizar Supabase tras rechazar")
+        await interaction.response.send_message("Postulación rechazada.", ephemeral=True)
         for child in self.children:
             child.disabled = True
         await interaction.message.edit(view=self)
@@ -119,6 +133,7 @@ class ReviewView(discord.ui.View):
 @bot.event
 async def on_ready():
     logging.info("Conectado como %s (%s)", bot.user, bot.user.id if bot.user else "?")
+    logging.info("Canales: postulacion=%s revision=%s aprobacion=%s", POSTULACION_CHANNEL_ID, REVISION_CHANNEL_ID, APROBACION_CHANNEL_ID)
 
 
 @bot.event
@@ -128,14 +143,20 @@ async def on_message(message: discord.Message):
     if message.channel.id != POSTULACION_CHANNEL_ID:
         await bot.process_commands(message)
         return
-    if POSTULACION_WEBHOOK_ID and message.webhook_id != POSTULACION_WEBHOOK_ID:
-        return
+    # Do not reject the message merely because a webhook was regenerated.
+    if POSTULACION_WEBHOOK_ID and message.webhook_id and message.webhook_id != POSTULACION_WEBHOOK_ID:
+        logging.warning("Webhook distinto detectado (%s); se procesa porque está en el canal correcto", message.webhook_id)
+    logging.info("Postulación recibida: message_id=%s webhook_id=%s", message.id, message.webhook_id)
     target = bot.get_channel(REVISION_CHANNEL_ID)
     if not target:
-        logging.error("No encuentro REVISION_CHANNEL_ID=%s", REVISION_CHANNEL_ID)
+        logging.error("No encuentro REVISION_CHANNEL_ID=%s; revisa el ID y permisos del canal", REVISION_CHANNEL_ID)
         return
     data = parse_submission(message)
-    submission_id = save_submission(data, webhook_message_id=message.id, webhook_id=message.webhook_id)
+    submission_id: str | None = None
+    try:
+        submission_id = save_submission(data, webhook_message_id=message.id, webhook_id=message.webhook_id)
+    except Exception:
+        logging.exception("Supabase falló; se continuará enviando la postulación a revisión")
     player = find_player_mention(data, message.content)
     path = await create_welcome_card(data, data.get("foto_url"), approved=False)
     summary = "**Nueva postulación para revisión**\n"
@@ -143,12 +164,12 @@ async def on_message(message: discord.Message):
     summary += f"**Rol:** {value(data, 'rol', 'role', default='No indicado')}\n"
     summary += f"**Rango:** {value(data, 'rango', 'rank', default='No indicado')}\n"
     summary += f"**Origen:** {message.channel.mention}"
-    review_message = await target.send(
-        content=summary,
-        file=discord.File(path) if path else None,
-        view=ReviewView(data, player, submission_id),
-    )
-    set_review_message(submission_id, review_message.id)
+    review_message = await target.send(content=summary, file=discord.File(path) if path else None, view=ReviewView(data, player, submission_id))
+    if submission_id:
+        try:
+            set_review_message(submission_id, review_message.id)
+        except Exception:
+            logging.exception("No se pudo guardar en Supabase el mensaje de revisión")
 
 
 @bot.command(name="salud")
