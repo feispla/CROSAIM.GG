@@ -8,7 +8,10 @@ import aiohttp
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).parent
-TEMPLATE = ROOT / "media" / "template.png"
+# Use the clean asset for dynamic rendering; template.png is a visible fallback
+# for older deployments so a card is never published with only the center logo.
+TEMPLATE = ROOT / "media" / "template_clean.png"
+FALLBACK_TEMPLATE = ROOT / "media" / "template.png"
 OUTPUT_DIR = ROOT / "media" / "generated"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -59,7 +62,8 @@ async def create_welcome_card(data: dict[str, Any], photo_url: str | None, appro
     rank = str(data.get("rango") or data.get("rank") or "RANGO").strip().upper()
     status = "APROBADA" if approved else "EN REVISIÓN"
 
-    canvas = Image.open(TEMPLATE).convert("RGBA") if TEMPLATE.exists() else Image.new("RGBA", (1920, 1920), "black")
+    source_template = TEMPLATE if TEMPLATE.exists() else FALLBACK_TEMPLATE
+    canvas = Image.open(source_template).convert("RGBA") if source_template.exists() else Image.new("RGBA", (1920, 1920), "black")
     draw = ImageDraw.Draw(canvas)
     lime = (190, 255, 0, 255)
     white = (245, 245, 245, 255)
