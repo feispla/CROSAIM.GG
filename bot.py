@@ -27,14 +27,27 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
+def value(data: dict[str, Any], *keys: str, default: str = "Por confirmar") -> str:
+    for key in keys:
+        raw = data.get(key)
+        if raw is not None and str(raw).strip():
+            return str(raw).strip()
+    return default
+
+
 def parse_submission(message: discord.Message) -> dict[str, Any]:
     data: dict[str, Any] = {"texto": message.content or ""}
     for embed in message.embeds:
-        if embed.title: data.setdefault("titulo", embed.title)
-        if embed.description: data.setdefault("descripcion", embed.description)
-        for field in embed.fields: data[field.name.strip().lower()] = field.value
-        if embed.image and embed.image.url: data.setdefault("foto_url", embed.image.url)
-        if embed.thumbnail and embed.thumbnail.url: data.setdefault("foto_url", embed.thumbnail.url)
+        if embed.title:
+            data.setdefault("titulo", embed.title)
+        if embed.description:
+            data.setdefault("descripcion", embed.description)
+        for field in embed.fields:
+            data[field.name.strip().lower()] = field.value
+        if embed.image and embed.image.url:
+            data.setdefault("foto_url", embed.image.url)
+        if embed.thumbnail and embed.thumbnail.url:
+            data.setdefault("foto_url", embed.thumbnail.url)
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith("image/"):
             data.setdefault("foto_url", attachment.url)
@@ -43,11 +56,30 @@ def parse_submission(message: discord.Message) -> dict[str, Any]:
 
 def find_player_mention(data: dict[str, Any], content: str) -> str | None:
     mention = re.search(r"<@!?\d{15,22}>", content or "")
-    if mention: return mention.group(0)
+    if mention:
+        return mention.group(0)
     for key in ("discord_id", "discord id", "id discord", "usuario_id"):
-        value = str(data.get(key, "")).strip()
-        if value.isdigit(): return f"<@{value}>"
+        value_found = str(data.get(key, "")).strip()
+        if value_found.isdigit():
+            return f"<@{value_found}>"
     return None
+
+
+def approval_description(data: dict[str, Any]) -> str:
+    name = value(data, "nombre", "name", default="Jugador")
+    role = value(data, "rol", "role")
+    rank = value(data, "rango", "rank")
+    return (
+        f"¡Bienvenido al roster, {name}!\n\n"
+        f"Nos complace anunciar oficialmente la incorporación de {name} a CROSAIM.\n\n"
+        f"**Rol:** {role}\n"
+        f"**Rango:** {rank}\n"
+        f"**Estado:** Aprobado\n\n"
+        "A partir de ahora forma parte de nuestra familia competitiva. "
+        "Le deseamos muchos éxitos, grandes partidas y el mejor desempeño "
+        "representando los colores de CROSAIM.\n\n"
+        f"¡Bienvenido al equipo, {name}!"
+    )
 
 
 class ReviewView(discord.ui.View):
@@ -60,15 +92,18 @@ class ReviewView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         channel = bot.get_channel(APROBACION_CHANNEL_ID)
         if not channel:
-            await interaction.followup.send("No encuentro el canal de aprobación.", ephemeral=True); return
+            await interaction.followup.send("No encuentro el canal de aprobación.", ephemeral=True)
+            return
         path = await create_welcome_card(self.data, self.data.get("foto_url"), approved=True)
-        content = f"{self.player_mention or ''}\n**Nuevo jugador aprobado para CROSAIM**\n"
-        content += f"**Jugador:** {self.data.get('nombre', self.data.get('name', 'Jugador'))}\n"
-        content += f"**Rol:** {self.data.get('rol', self.data.get('role', 'Por confirmar'))}\n"
-        content += f"**Rango:** {self.data.get('rango', self.data.get('rank', 'Por confirmar'))}"
-        approval_message = await channel.send(content=content, file=discord.File(path) if path else None)
+        content = f"{self.player_mention}\n" if self.player_mention else ""
+        content += approval_description(self.data)
+        approval_message = await channel.send(
+            content=content,
+            file=discord.File(path) if path else None,
+        )
         set_status(self.submission_id, "aprobada", interaction.user.id, approval_message_id=approval_message.id)
-        for child in self.children: child.disabled = True
+        for child in self.children:
+            child.disabled = True
         await interaction.message.edit(view=self)
         await interaction.followup.send("Postulación aprobada y enviada a ✅ Aprobación.", ephemeral=True)
 
@@ -76,7 +111,8 @@ class ReviewView(discord.ui.View):
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         set_status(self.submission_id, "rechazada", interaction.user.id, reason="Rechazada desde el canal de revisión")
         await interaction.response.send_message("Postulación rechazada. Puedes escribir el motivo en este canal.", ephemeral=True)
-        for child in self.children: child.disabled = True
+        for child in self.children:
+            child.disabled = True
         await interaction.message.edit(view=self)
 
 
@@ -87,26 +123,37 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot and not message.webhook_id: return
+    if message.author.bot and not message.webhook_id:
+        return
     if message.channel.id != POSTULACION_CHANNEL_ID:
-        await bot.process_commands(message); return
-    if POSTULACION_WEBHOOK_ID and message.webhook_id != POSTULACION_WEBHOOK_ID: return
+        await bot.process_commands(message)
+        return
+    if POSTULACION_WEBHOOK_ID and message.webhook_id != POSTULACION_WEBHOOK_ID:
+        return
     target = bot.get_channel(REVISION_CHANNEL_ID)
-    if not target: logging.error("No encuentro REVISION_CHANNEL_ID=%s", REVISION_CHANNEL_ID); return
+    if not target:
+        logging.error("No encuentro REVISION_CHANNEL_ID=%s", REVISION_CHANNEL_ID)
+        return
     data = parse_submission(message)
     submission_id = save_submission(data, webhook_message_id=message.id, webhook_id=message.webhook_id)
     player = find_player_mention(data, message.content)
     path = await create_welcome_card(data, data.get("foto_url"), approved=False)
     summary = "**Nueva postulación para revisión**\n"
-    summary += f"**Jugador:** {data.get('nombre', data.get('name', 'No indicado'))}\n"
-    summary += f"**Rol:** {data.get('rol', data.get('role', 'No indicado'))}\n"
-    summary += f"**Rango:** {data.get('rango', data.get('rank', 'No indicado'))}\n**Origen:** {message.channel.mention}"
-    review_message = await target.send(content=summary, file=discord.File(path) if path else None, view=ReviewView(data, player, submission_id))
+    summary += f"**Jugador:** {value(data, 'nombre', 'name', default='No indicado')}\n"
+    summary += f"**Rol:** {value(data, 'rol', 'role', default='No indicado')}\n"
+    summary += f"**Rango:** {value(data, 'rango', 'rank', default='No indicado')}\n"
+    summary += f"**Origen:** {message.channel.mention}"
+    review_message = await target.send(
+        content=summary,
+        file=discord.File(path) if path else None,
+        view=ReviewView(data, player, submission_id),
+    )
     set_review_message(submission_id, review_message.id)
 
 
 @bot.command(name="salud")
 async def health(ctx: commands.Context):
     await ctx.send("Crosaim está conectado y listo para revisar postulaciones.")
+
 
 bot.run(TOKEN)
