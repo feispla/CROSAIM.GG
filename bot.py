@@ -13,6 +13,7 @@ from typing import Any
 import discord
 from discord.ext import commands, tasks
 import aiohttp
+from aiohttp import web
 from dotenv import load_dotenv
 
 from crosaim_setup import (
@@ -40,6 +41,7 @@ INTERVIEW_VOICE_CHANNEL_ID = int(os.getenv("INTERVIEW_VOICE_CHANNEL_ID", "0"))
 INTERVIEW_NOTICE_CHANNEL_ID = int(os.getenv("INTERVIEW_NOTICE_CHANNEL_ID", "0"))
 CROSAIM_WEB_BASE_URL = os.getenv("CROSAIM_WEB_BASE_URL", "https://crosaimdash-h9bxzuxs.manus.space").rstrip("/")
 CROSAIM_BOT_SYNC_SECRET = os.getenv("CROSAIM_BOT_SYNC_SECRET", "")
+HEALTH_PORT = int(os.getenv("PORT", "10000"))
 # Optional: leave empty to accept any webhook message arriving in the postulation channel.
 POSTULACION_WEBHOOK_ID = int(os.getenv("POSTULACION_WEBHOOK_ID", "0") or "0")
 if not TOKEN:
@@ -47,7 +49,33 @@ if not TOKEN:
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+_health_runner: web.AppRunner | None = None
+
+
+async def healthz(_: web.Request) -> web.Response:
+    return web.json_response({"status": "ok", "service": "crosaim-discord-bot"})
+
+
+async def start_health_server() -> None:
+    global _health_runner
+    if _health_runner is not None:
+        return
+    app = web.Application()
+    app.router.add_get("/", healthz)
+    app.router.add_get("/healthz", healthz)
+    _health_runner = web.AppRunner(app)
+    await _health_runner.setup()
+    site = web.TCPSite(_health_runner, "0.0.0.0", HEALTH_PORT)
+    await site.start()
+    logging.info("Health server listening on 0.0.0.0:%s", HEALTH_PORT)
+
+
+class CrosaimBot(commands.Bot):
+    async def setup_hook(self) -> None:
+        await start_health_server()
+
+
+bot = CrosaimBot(command_prefix="!", intents=intents)
 
 
 def get_crosaim_channel(key: str) -> discord.abc.GuildChannel | None:
@@ -593,6 +621,7 @@ async def on_ready():
     logging.info("Conectado como %s (%s)", bot.user, bot.user.id if bot.user else "?")
     logging.info("Canales: postulacion=%s revision=%s aprobacion=%s clips=%s entrevista=%s aviso_entrevista=%s guild=%s", POSTULACION_CHANNEL_ID, REVISION_CHANNEL_ID, APROBACION_CHANNEL_ID, CLIPS_CHANNEL_ID, INTERVIEW_VOICE_CHANNEL_ID, INTERVIEW_NOTICE_CHANNEL_ID, GUILD_ID)
     try:
+        await start_health_server()
         await register_crosaim_admin_cog(bot)
         logging.info("Comandos /crosaim sincronizados")
         bot.add_view(ReviewView())
