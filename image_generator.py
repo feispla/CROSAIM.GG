@@ -8,8 +8,6 @@ import aiohttp
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).parent
-# Use the clean asset for dynamic rendering; template.png is a visible fallback
-# for older deployments so a card is never published with only the center logo.
 TEMPLATE = ROOT / "media" / "template_clean.png"
 FALLBACK_TEMPLATE = ROOT / "media" / "template.png"
 OUTPUT_DIR = ROOT / "media" / "generated"
@@ -28,14 +26,29 @@ def _font(size: int, bold: bool = False):
     return ImageFont.load_default()
 
 
-def _fit_text(draw: ImageDraw.ImageDraw, text: str, max_width: int, start_size: int, bold: bool = True):
+def _fit_text(draw: ImageDraw.ImageDraw, text: str, max_width: int, start_size: int, *, min_size: int = 18, bold: bool = True):
     size = start_size
-    while size > 20:
+    while size > min_size:
         font = _font(size, bold)
-        if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        if bbox[2] - bbox[0] <= max_width:
             return font
         size -= 2
-    return _font(20, bold)
+    return _font(min_size, bold)
+
+
+def _ellipsize(draw: ImageDraw.ImageDraw, text: str, max_width: int, font: ImageFont.FreeTypeFont) -> str:
+    if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+        return text
+    candidate = text
+    while candidate and draw.textbbox((0, 0), candidate + "…", font=font)[2] > max_width:
+        candidate = candidate[:-1]
+    return (candidate.rstrip() or "—") + "…"
+
+
+def _safe_label(value: Any, fallback: str, limit: int = 120) -> str:
+    label = str(value or fallback).replace("\n", " ").strip().upper()
+    return " ".join(label.split())[:limit] or fallback
 
 
 async def download_image(url: str) -> Image.Image | None:
@@ -44,10 +57,14 @@ async def download_image(url: str) -> Image.Image | None:
     try:
         timeout = aiohttp.ClientTimeout(total=20)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as response:
-                if response.status != 200:
+            async with session.get(url, allow_redirects=True) as response:
+                content_type = response.headers.get("content-type", "")
+                if response.status != 200 or not content_type.startswith("image/"):
                     return None
-                return Image.open(io.BytesIO(await response.read())).convert("RGBA")
+                payload = await response.read()
+                if len(payload) > 8 * 1024 * 1024:
+                    return None
+                return Image.open(io.BytesIO(payload)).convert("RGBA")
     except Exception:
         return None
 
@@ -56,11 +73,18 @@ def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     return ImageOps.fit(image, size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.38))
 
 
+def _draw_centered_label(draw: ImageDraw.ImageDraw, *, center: tuple[int, int], text: str, max_width: int, start_size: int, color: tuple[int, int, int, int], min_size: int = 18) -> None:
+    font = _fit_text(draw, text, max_width, start_size, min_size=min_size)
+    label = _ellipsize(draw, text, max_width, font)
+    draw.text(center, label, anchor="mm", fill=color, font=font)
+
+
 async def create_welcome_card(data: dict[str, Any], photo_url: str | None, approved: bool = False) -> Path | None:
-    name = str(data.get("nombre") or data.get("name") or data.get("playerName") or "NOMBRE DEL JUGADOR").strip().upper()
-    role = str(data.get("rol") or data.get("role") or "ROL").strip().upper()
-    rank = str(data.get("rango") or data.get("rank") or "RANGO").strip().upper()
-    status = "APROBADA" if approved else "EN REVISIÓN"
+    name = _safe_label(data.get("nombre") or data.get("name") or data.get("playerName"), "NOMBRE DEL JUGADOR")
+    role = _safe_label(data.get("rol") or data.get("role"), "ROL")
+    rank = _safe_label(data.get("rango") or data.get("rank"), "RANGO")
+    raw_status = data.get("status") or data.get("estado")
+    status = "APROBADA" if approved else _safe_label(raw_status, "EN REVISIÓN", limit=32)
 
     source_template = TEMPLATE if TEMPLATE.exists() else FALLBACK_TEMPLATE
     canvas = Image.open(source_template).convert("RGBA") if source_template.exists() else Image.new("RGBA", (1920, 1920), "black")
@@ -68,18 +92,16 @@ async def create_welcome_card(data: dict[str, Any], photo_url: str | None, appro
     lime = (190, 255, 0, 255)
     white = (245, 245, 245, 255)
 
-    # Dynamic text positions match the approved CROSAIM layout.
-    title_font = _font(112, True)
-    draw.text((960, 105), "BIENVENIDO", anchor="mm", fill=white, font=title_font)
-    draw.text((960, 235), "AL ROSTER", anchor="mm", fill=lime, font=title_font)
-    name_font = _fit_text(draw, name, 1540, 210, True)
-    draw.text((960, 455), name, anchor="mm", fill=lime, font=name_font)
-    draw.text((215, 785), role, anchor="mm", fill=lime, font=_font(52, True))
-    draw.text((245, 875), rank, anchor="mm", fill=white, font=_fit_text(draw, rank, 330, 70, True))
-    draw.text((1285, 875), status, anchor="mm", fill=lime, font=_fit_text(draw, status, 540, 58, True))
-    draw.text((960, 1325), "CROSAIM", anchor="mm", fill=lime, font=_font(54, True))
+    # All labels are constrained to explicit safe areas; no caller-controlled text
+    # can extend outside the canvas or overlap the player image.
+    _draw_centered_label(draw, center=(960, 105), text="BIENVENIDO", max_width=1480, start_size=112, color=white, min_size=54)
+    _draw_centered_label(draw, center=(960, 235), text="AL ROSTER", max_width=1480, start_size=112, color=lime, min_size=54)
+    _draw_centered_label(draw, center=(960, 455), text=name, max_width=1540, start_size=210, color=lime, min_size=34)
+    _draw_centered_label(draw, center=(235, 785), text=role, max_width=390, start_size=52, color=lime, min_size=18)
+    _draw_centered_label(draw, center=(245, 875), text=rank, max_width=360, start_size=70, color=white, min_size=18)
+    _draw_centered_label(draw, center=(1285, 875), text=status, max_width=540, start_size=58, color=lime, min_size=18)
+    _draw_centered_label(draw, center=(960, 1325), text="CROSAIM", max_width=680, start_size=54, color=lime, min_size=28)
 
-    # If the application includes a photo, place it over the logo area; otherwise the template logo remains.
     player = await download_image(photo_url or "")
     if player:
         canvas.alpha_composite(_cover(player, (780, 780)), (570, 690))

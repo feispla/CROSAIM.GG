@@ -46,8 +46,8 @@ class FakeClient:
         return query
 
 
-def test_save_submission_maps_fields_and_returns_id(monkeypatch):
-    fake = FakeClient([FakeResponse([{"id": "submission-123"}])])
+def test_save_submission_maps_fields_returns_id_and_audits(monkeypatch):
+    fake = FakeClient([FakeResponse([{ "id": "submission-123" }]), FakeResponse([])])
     monkeypatch.setattr(supabase_db, "_client", fake)
 
     submission_id = supabase_db.save_submission(
@@ -61,9 +61,13 @@ def test_save_submission_maps_fields_and_returns_id(monkeypatch):
     assert row["nombre"] == "Ana"
     assert row["rol"] == "Duelista"
     assert row["rango"] == "Diamante"
+    assert row["estado"] == "POSTULACIÓN"
     assert row["discord_postulacion_message_id"] == "456"
     assert row["discord_webhook_id"] == "789"
     assert row["descripcion"] == "Hola"
+    audit = fake.queries[1].inserted
+    assert audit["estado_anterior"] is None
+    assert audit["estado_nuevo"] == "POSTULACIÓN"
 
 
 def test_save_submission_raises_when_supabase_returns_no_row(monkeypatch):
@@ -78,15 +82,29 @@ def test_save_submission_raises_when_supabase_returns_no_row(monkeypatch):
         raise AssertionError("Expected RuntimeError")
 
 
-def test_set_status_updates_review_metadata(monkeypatch):
-    fake = FakeClient([FakeResponse([])])
+def test_set_status_updates_state_metadata_and_audits(monkeypatch):
+    fake = FakeClient([
+        FakeResponse([{ "id": "submission-123", "estado": "REVISIÓN" }]),
+        FakeResponse([]),
+        FakeResponse([]),
+    ])
     monkeypatch.setattr(supabase_db, "_client", fake)
 
-    supabase_db.set_status("submission-123", "aprobada", 999, approval_message_id=111)
+    status = supabase_db.set_status("submission-123", "aprobada", 999, approval_message_id=111)
 
-    query = fake.queries[0]
+    assert status == "APROBADA"
+    query = fake.queries[1]
     assert ("id", "submission-123") in query.filters
-    assert query.updated["estado"] == "aprobada"
+    assert query.updated["estado"] == "APROBADA"
     assert query.updated["revisado_por_discord_id"] == "999"
     assert query.updated["discord_aprobacion_message_id"] == "111"
-    assert "reviewed_at" in query.updated
+    assert "approved_at" in query.updated
+    audit = fake.queries[2].inserted
+    assert audit["estado_anterior"] == "REVISIÓN"
+    assert audit["estado_nuevo"] == "APROBADA"
+
+
+def test_canonical_status_supports_legacy_values():
+    assert supabase_db.canonical_status("pendiente") == "POSTULACIÓN"
+    assert supabase_db.canonical_status("En revisión") == "REVISIÓN"
+    assert supabase_db.canonical_status("ROSTER") == "ROSTER"
