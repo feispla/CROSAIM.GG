@@ -20,7 +20,7 @@ from crosaim_setup import (
     register_crosaim_admin_cog,
 )
 from image_generator import create_welcome_card
-from supabase_db import find_submission_by_message, save_submission, set_review_message, set_status
+from supabase_db import find_submission_by_message, find_submission_by_review_message, save_submission, set_review_message, set_status
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -309,12 +309,18 @@ async def deliver_web_event(event: dict[str, Any]) -> None:
         channel = get_text_channel("tryouts") or get_text_channel("roster")
         if not channel:
             raise RuntimeError("No encuentro canal para avisar el tryout")
-        await channel.send(f"🟣 **NUEVO TRYOUT EN PLANTILLA**\n{event_summary(payload)}\n`evento:{event_id}`", allowed_mentions=discord.AllowedMentions.none())
+        role_result = await assign_application_role(payload, "Tryout")
+        await channel.send(f"🟣 **NUEVO TRYOUT EN PLANTILLA**\n{event_summary(payload)}\n**Discord:** {role_result}\n`evento:{event_id}`", allowed_mentions=discord.AllowedMentions.none())
     elif event_type in {"player_joined", "player_left", "role_updated"}:
         channel = get_text_channel("general") or get_text_channel("audit")
         if not channel:
             raise RuntimeError("No encuentro un canal de comunidad para el evento")
-        await channel.send(f"👥 **CROSAIM · {event_type.replace('_', ' ').upper()}**\n{event_summary(payload)}\n`evento:{event_id}`", allowed_mentions=discord.AllowedMentions.none())
+        role_result = ""
+        if event_type == "role_updated":
+            target_role = "Roster" if str(payload.get("status") or "").upper() == "ROSTER" else "Tryout" if str(payload.get("status") or "").upper() == "TRYOUT" else ""
+            if target_role:
+                role_result = await assign_application_role(payload, target_role, remove_roles=("Tryout",) if target_role == "Roster" else ())
+        await channel.send(f"👥 **CROSAIM · {event_type.replace('_', ' ').upper()}**\n{event_summary(payload)}\n**Discord:** {role_result}\n`evento:{event_id}`", allowed_mentions=discord.AllowedMentions.none())
     elif event_type in {"tournament_created", "tournament_updated", "tournament_result"}:
         channel = get_text_channel("tournament_announcements") or get_text_channel("tournament_results")
         if not channel:
@@ -388,20 +394,51 @@ def is_recruiting_staff(member: discord.Member) -> bool:
     return any(normalize(role.name) in allowed for role in member.roles)
 
 
-async def assign_application_role(data: dict[str, Any], role_name: str) -> str:
+def submission_context(record: dict[str, Any]) -> tuple[dict[str, Any], str | None, str | None]:
+    payload = record.get("payload_original") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    data: dict[str, Any] = dict(payload)
+    data.setdefault("nombre", record.get("nombre"))
+    data.setdefault("discord_id", record.get("discord_id"))
+    data.setdefault("discord_username", record.get("discord_username"))
+    data.setdefault("rol", record.get("rol"))
+    data.setdefault("rango", record.get("rango"))
+    data.setdefault("descripcion", record.get("descripcion"))
+    data.setdefault("foto_url", record.get("foto_url"))
+    discord_id = str(data.get("discord_id") or "").strip()
+    mention = f"<@{discord_id}>" if discord_id.isdigit() else None
+    return data, mention, str(record.get("id")) if record.get("id") else None
+
+
+def find_role_for_assignment(guild: discord.Guild, role_name: str) -> discord.Role | None:
+    role_id = load_runtime_role_id(role_name)
+    role = guild.get_role(role_id) if role_id else None
+    if role:
+        return role
+    aliases = {"Roster": ("roster",), "Tryout": ("tryout", "tryouts"), "Postulante": ("applicant",)}
+    candidates = (role_name, *aliases.get(role_name, ()))
+    return next((item for item in guild.roles if any(normalize(item.name) == normalize(candidate) for candidate in candidates)), None)
+
+
+async def assign_application_role(data: dict[str, Any], role_name: str, *, remove_roles: tuple[str, ...] = ()) -> str:
     discord_id = str(data.get("discord_id") or data.get("discordUserId") or "").strip()
     guild = bot.get_guild(GUILD_ID) if GUILD_ID else None
-    role_id = load_runtime_role_id(role_name)
-    role = guild.get_role(role_id) if guild and role_id else None
+    role = find_role_for_assignment(guild, role_name) if guild else None
     if not guild or not role or not discord_id.isdigit():
-        return "No se asignó rol automáticamente: falta servidor, rol o Discord ID válido."
+        return f"No se asignó {role_name}: falta servidor, rol o Discord ID válido."
     try:
         member = guild.get_member(int(discord_id)) or await guild.fetch_member(int(discord_id))
-        await member.add_roles(role, reason=f"CROSAIM: cambio de candidatura a {role_name}")
+        for old_name in remove_roles:
+            old_role = find_role_for_assignment(guild, old_name)
+            if old_role and old_role in member.roles and old_role != role:
+                await member.remove_roles(old_role, reason=f"CROSAIM: retirar {old_name} al pasar a {role_name}")
+        if role not in member.roles:
+            await member.add_roles(role, reason=f"CROSAIM: cambio de candidatura a {role_name}")
         await write_audit_log("ROL", f"Se asignó {role.mention} a {member.mention} por candidatura {role_name}.", level="success")
         return f"Rol {role.name} asignado."
     except discord.Forbidden:
-        await write_audit_log("ROL", f"No se pudo asignar {role_name}; revisa Gestionar roles y jerarquía del bot.", level="error")
+        await write_audit_log("ROL", f"No se pudo asignar {role_name}; revisa permisos y jerarquía del bot.", level="error")
         return "No se asignó rol: faltan permisos o jerarquía del bot."
     except discord.NotFound:
         return "No se asignó rol: el jugador no está en el servidor."
@@ -411,9 +448,25 @@ async def assign_application_role(data: dict[str, Any], role_name: str) -> str:
 
 
 class ReviewView(discord.ui.View):
-    def __init__(self, data: dict[str, Any], player_mention: str | None, submission_id: str | None):
+    def __init__(self, data: dict[str, Any] | None = None, player_mention: str | None = None, submission_id: str | None = None):
         super().__init__(timeout=None)
-        self.data, self.player_mention, self.submission_id = data, player_mention, submission_id
+        self.data = data or {}
+        self.player_mention = player_mention
+        self.submission_id = submission_id
+
+    def resolve_context(self, interaction: discord.Interaction) -> tuple[dict[str, Any], str | None, str | None]:
+        if self.data and self.submission_id:
+            return self.data, self.player_mention, self.submission_id
+        record = find_submission_by_review_message(interaction.message.id) if interaction.message else None
+        if not record:
+            return {}, None, None
+        return submission_context(record)
+
+    async def disable_message(self, interaction: discord.Interaction) -> None:
+        for child in self.children:
+            child.disabled = True
+        if interaction.message:
+            await interaction.message.edit(view=self)
 
     @discord.ui.button(label="Aprobar", style=discord.ButtonStyle.success, custom_id="crosaim:approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -421,63 +474,78 @@ class ReviewView(discord.ui.View):
             await interaction.response.send_message("Solo el staff de CROSAIM puede aprobar postulaciones.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
-        channel = get_text_channel("roster")
-        if not channel:
-            await interaction.followup.send("No encuentro el canal CROSAIM de roster.", ephemeral=True)
+        data, player_mention, submission_id = self.resolve_context(interaction)
+        if not submission_id:
+            await interaction.followup.send("No encontré los datos de esta postulación. Ejecuta una nueva revisión desde el panel.", ephemeral=True)
             return
-        path = await create_welcome_card(self.data, self.data.get("foto_url"), approved=True)
-        content = f"{self.player_mention}\n" if self.player_mention else ""
-        content += approval_description(self.data)
+        channel = get_text_channel("tryouts") or get_text_channel("roster")
+        if not channel:
+            await interaction.followup.send("No encuentro el canal de tryout/roster.", ephemeral=True)
+            return
+        path = await create_welcome_card(data, data.get("foto_url"), approved=True)
+        content = f"{player_mention}\n" if player_mention else ""
+        content += approval_description(data).replace("Bienvenido al roster", "Candidato enviado a tryout").replace("incorporación", "inicio del tryout")
         approval_message = await channel.send(content=content, file=discord.File(path) if path else None, allowed_mentions=discord.AllowedMentions(users=True))
-        role_result = await assign_application_role(self.data, "Roster")
-        if self.submission_id:
-            try:
-                set_status(self.submission_id, "APROBADA", interaction.user.id, approval_message_id=approval_message.id, detail={"role_result": role_result})
-            except Exception:
-                logging.exception("No se pudo actualizar Supabase tras aprobar")
-        await write_audit_log("APROBACIÓN", f"{interaction.user.mention} aprobó una postulación. {role_result}", level="success")
-        for child in self.children:
-            child.disabled = True
-        await interaction.message.edit(view=self)
-        await interaction.followup.send("Postulación aprobada y enviada a ✅ Aprobación.", ephemeral=True)
+        approval_result = assign_result = ""
+        try:
+            set_status(submission_id, "APROBADA", interaction.user.id, detail={"approval_message_id": str(approval_message.id)})
+            assign_result = await assign_application_role(data, "Tryout")
+            set_status(submission_id, "TRYOUT", interaction.user.id, detail={"role_result": assign_result, "approval_message_id": str(approval_message.id)})
+            approval_result = "Candidato aprobado y enviado a Tryout."
+        except Exception as error:
+            logging.exception("No se pudo completar la transición aprobación→tryout")
+            await write_audit_log("TRYOUT", f"Error al completar aprobación de candidatura: {error}", level="error")
+            approval_result = f"El anuncio fue publicado, pero la transición quedó pendiente: {error}"
+        await write_audit_log("TRYOUT", f"{interaction.user.mention} aprobó una postulación y la envió a Tryout. {assign_result}", level="success")
+        await self.disable_message(interaction)
+        await interaction.followup.send(f"{approval_result} {assign_result}", ephemeral=True)
 
     @discord.ui.button(label="Rechazar", style=discord.ButtonStyle.danger, custom_id="crosaim:reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not isinstance(interaction.user, discord.Member) or not is_recruiting_staff(interaction.user):
             await interaction.response.send_message("Solo el staff de CROSAIM puede rechazar postulaciones.", ephemeral=True)
             return
-        if self.submission_id:
-            try:
-                set_status(self.submission_id, "RECHAZADA", interaction.user.id, reason="Rechazada desde el canal de revisión")
-            except Exception:
-                logging.exception("No se pudo actualizar Supabase tras rechazar")
+        data, player_mention, submission_id = self.resolve_context(interaction)
+        if not submission_id:
+            await interaction.response.send_message("No encontré los datos de esta postulación.", ephemeral=True)
+            return
+        try:
+            set_status(submission_id, "RECHAZADA", interaction.user.id, reason="Rechazada desde el canal de revisión")
+        except Exception as error:
+            logging.exception("No se pudo actualizar Supabase tras rechazar")
+            await interaction.response.send_message(f"No se pudo rechazar: {error}", ephemeral=True)
+            return
         await write_audit_log("RECHAZO", f"{interaction.user.mention} rechazó una postulación.", level="warning")
-        await interaction.response.send_message("Postulación rechazada.", ephemeral=True)
-        for child in self.children:
-            child.disabled = True
-        await interaction.message.edit(view=self)
+        await interaction.response.send_message("Postulación rechazada y sincronizada.", ephemeral=True)
+        await self.disable_message(interaction)
 
     @discord.ui.button(label="Entrevista", style=discord.ButtonStyle.primary, custom_id="crosaim:interview")
     async def interview(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not isinstance(interaction.user, discord.Member) or not is_recruiting_staff(interaction.user):
             await interaction.response.send_message("Solo el staff de CROSAIM puede pasar a entrevista.", ephemeral=True)
             return
-        if self.submission_id:
-            try:
-                set_status(self.submission_id, "ENTREVISTA", interaction.user.id, detail={"source_message_id": interaction.message.id})
-            except Exception:
-                logging.exception("No se pudo actualizar Supabase para entrevista")
+        data, player_mention, submission_id = self.resolve_context(interaction)
+        if not submission_id:
+            await interaction.response.send_message("No encontré los datos de esta postulación.", ephemeral=True)
+            return
+        try:
+            set_status(submission_id, "ENTREVISTA", interaction.user.id, detail={"source_message_id": interaction.message.id if interaction.message else None})
+        except Exception as error:
+            logging.exception("No se pudo actualizar Supabase para entrevista")
+            await interaction.response.send_message(f"No se pudo pasar a entrevista: {error}", ephemeral=True)
+            return
         notice_channel = get_text_channel("interviews") or get_text_channel("review")
-        move_result = await move_member_to_interview_voice(self.data)
+        move_result = await move_member_to_interview_voice(data)
         target = get_crosaim_channel("interview_voice")
         if notice_channel:
             await notice_channel.send(
-                f"🎙️ **ENTREVISTA CROSAIM**\n{self.player_mention or value(self.data, 'nombre', default='Jugador')}\n"
+                f"🎙️ **ENTREVISTA CROSAIM**\n{player_mention or value(data, 'nombre', default='Jugador')}\n"
                 f"**Voz:** {move_result}\nCanal objetivo: {target.mention if target else '𝑽𝑨𝑳𝑶𝑹𝑨𝑵𝑻 no disponible'}",
                 allowed_mentions=discord.AllowedMentions(users=True),
             )
         await write_audit_log("ENTREVISTA", f"{interaction.user.mention} cambió una postulación a entrevista. {move_result}", level="info")
         await interaction.response.send_message(f"Candidatura pasada a entrevista. {move_result}", ephemeral=True)
+        await self.disable_message(interaction)
 
 
 @bot.event
@@ -487,6 +555,8 @@ async def on_ready():
     try:
         await register_crosaim_admin_cog(bot)
         logging.info("Comandos /crosaim sincronizados")
+        bot.add_view(ReviewView())
+        logging.info("Vista persistente de revisión registrada")
     except Exception:
         logging.exception("No se pudieron sincronizar los comandos /crosaim")
     if not poll_web_events.is_running():
