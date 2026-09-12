@@ -79,6 +79,19 @@ def append_audit_event(
     }).execute()
 
 
+def find_submission_by_review_message(message_id: int) -> dict[str, Any] | None:
+    """Carga los datos completos para que los botones sobrevivan a reinicios del bot."""
+    result = (
+        client()
+        .table("postulaciones")
+        .select("id, nombre, discord_id, discord_username, rol, rango, descripcion, foto_url, payload_original, estado")
+        .eq("discord_revision_message_id", str(message_id))
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
 def find_submission_by_message(message_id: int) -> dict[str, Any] | None:
     """Busca una postulación ya creada para un mensaje de Discord."""
     result = (
