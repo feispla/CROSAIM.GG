@@ -154,10 +154,10 @@ def find_player_mention(data: dict[str, Any], content: str) -> str | None:
     return None
 
 
-async def sync_application_to_web(data: dict[str, Any], message: discord.Message) -> None:
+async def sync_application_to_web(data: dict[str, Any], message: discord.Message) -> str | None:
     if not CROSAIM_BOT_SYNC_SECRET:
         logging.warning("No se sincroniza la postulación web: falta CROSAIM_BOT_SYNC_SECRET")
-        return
+        return None
     discord_id = str(data.get("discord_id") or "").strip()
     mention = re.search(r"<@!?(\d{15,22})>", message.content or "")
     if not discord_id and mention:
@@ -181,6 +181,8 @@ async def sync_application_to_web(data: dict[str, Any], message: discord.Message
         ) as response:
             if response.status >= 300:
                 raise RuntimeError(f"web application sync HTTP {response.status}: {await response.text()}")
+            response_data = await response.json()
+            return str(response_data.get("publicLookupNumber") or "") or None
 
 
 async def acknowledge_web_event(event_id: int, ok: bool, error: str | None = None) -> None:
@@ -598,8 +600,14 @@ async def on_message(message: discord.Message):
             logging.warning("Postulación duplicada detectada tras inserción: message_id=%s", message.id)
             return
         logging.exception("Supabase falló; se continuará enviando la postulación a revisión")
+    public_lookup_number: str | None = None
     try:
-        await sync_application_to_web(data, message)
+        public_lookup_number = await sync_application_to_web(data, message)
+        if public_lookup_number and message.author and not message.author.bot:
+            try:
+                await message.author.send(f"Tu postulación CROSAIM fue recibida. Número privado de consulta: **{public_lookup_number}**\nConsulta el estado en {CROSAIM_WEB_BASE_URL} sin iniciar sesión.")
+            except discord.HTTPException:
+                logging.info("No se pudo enviar DM de consulta a %s", message.author)
     except Exception:
         logging.exception("La postulación llegó a Discord, pero no se pudo reflejar en la web")
     player = find_player_mention(data, message.content)
