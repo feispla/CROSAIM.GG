@@ -21,7 +21,7 @@ El bot publica en `REVISION_CHANNEL_ID` los siguientes tipos:
 
 La tarjeta gráfica no es un evento ni un requisito de sincronización. Es un recurso visual opcional para una bienvenida o aprobación. Las actualizaciones web se envían como texto y enlaces para evitar generar imágenes innecesarias.
 
-También mantiene los eventos existentes `application_interview`, `application_approved`, `application_rejected`, `roster_tryout` y `clip_uploaded`.
+También procesa `application_review`, `application_interview`, `application_approved`, `application_rejected`, `roster_tryout`, `role_updated`, `player_joined`, `player_left`, `tournament_created`, `tournament_updated`, `tournament_result`, `system_error`, `sync_error` y `clip_uploaded`. Todo evento debe incluir un ID de evento o una clave de idempotencia y no se considera entregado antes del ACK exitoso.
 
 ## Confirmación y reintentos
 

@@ -1,6 +1,6 @@
 # CROSAIM Discord Bot
 
-Bot Python para el flujo `Postulación → Revisión → Aprobación`, con botones, generación de imagen y registro opcional en Supabase.
+Bot Python para el flujo `POSTULACIÓN → REVISIÓN → ENTREVISTA → APROBADA/RECHAZADA → TRYOUT/ROSTER`, con botones, generación de imagen, roles y registro auditable en Supabase.
 
 ## Ejecutar localmente
 
@@ -23,6 +23,14 @@ El bot puede consultar la cola protegida de eventos del panel y publicar en Disc
 Cuando una postulación pasa a entrevista, el bot menciona al candidato y, si el usuario ya está conectado a un canal de voz y el bot tiene el permiso **Mover miembros** con una posición superior en la jerarquía, lo mueve a `𝑽𝑨𝑳𝑶𝑹𝑨𝑵𝑻`. Discord no permite mover automáticamente a un usuario que todavía no está conectado a voz; en ese caso el bot deja el aviso y el enlace del canal.
 
 Las postulaciones recibidas desde el canal configurado se sincronizan con el panel mediante el ID del mensaje de Discord. Esto evita duplicados cuando Railway reintenta el proceso. La imagen de bienvenida se genera con el nombre, rol y rango reales del jugador al aprobarlo.
+
+## Configuración del servidor
+
+El comando administrativo `/crosaim setup` audita el servidor, reutiliza canales y roles equivalentes, crea solo los recursos faltantes y guarda los IDs descubiertos en `CROSAIM_RUNTIME_CONFIG_PATH`. Ejecutarlo dos veces no duplica canales. `/crosaim status` muestra los permisos, recursos faltantes y el estado de la configuración.
+
+El directorio elegido para `CROSAIM_RUNTIME_CONFIG_PATH` debe pertenecer a un volumen persistente del proveedor de ejecución. El bot requiere **Gestionar canales**, **Gestionar roles** y **Mover miembros** para ejecutar por completo setup, roles automáticos y entrevistas; no requiere Administrator.
+
+Antes de desplegar la actualización, ejecutar `supabase_migration_application_state.sql` en Supabase. Esa migración incorpora los siete estados operativos, timestamps y la tabla de auditoría sin exponer secretos.
 
 ## Integración web, perfiles y Discord
 
