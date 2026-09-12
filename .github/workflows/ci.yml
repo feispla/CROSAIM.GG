@@ -21,4 +21,6 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
       - name: Compile Python modules
-        run: python -m compileall -q bot.py image_generator.py supabase_db.py
+        run: python -m compileall -q bot.py image_generator.py supabase_db.py crosaim_setup.py
+      - name: Build container image
+        run: docker build --tag crosaim-discord-bot:ci .
