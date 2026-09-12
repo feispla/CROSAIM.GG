@@ -4,6 +4,10 @@ import logging
 import json
 import os
 import re
+import hashlib
+import hmac
+import secrets
+import time
 from typing import Any
 
 import discord
@@ -13,6 +17,8 @@ from dotenv import load_dotenv
 
 from crosaim_setup import (
     LAYOUT,
+    BUSINESS_ROLE_SPECS,
+    can_manage_recruiting,
     canonical_status,
     load_runtime_channel_id,
     load_runtime_role_id,
@@ -87,6 +93,29 @@ def value(data: dict[str, Any], *keys: str, default: str = "Por confirmar") -> s
         if raw is not None and str(raw).strip():
             return str(raw).strip()
     return default
+
+
+def signed_sync_headers(method: str, path: str, body: dict[str, Any] | None = None) -> tuple[dict[str, str], str]:
+    """Creates a replay-resistant service-to-service request signature."""
+    if not CROSAIM_BOT_SYNC_SECRET:
+        raise RuntimeError("Falta CROSAIM_BOT_SYNC_SECRET")
+    serialized = "" if body is None else json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    timestamp = str(int(time.time() * 1000))
+    nonce = secrets.token_hex(16)
+    body_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    signing_payload = "\n".join((method.upper(), path, timestamp, nonce, body_hash))
+    signature = hmac.new(CROSAIM_BOT_SYNC_SECRET.encode("utf-8"), signing_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        # Transitional compatibility: the Control Center can accept this while
+        # CROSAIM_SIGNED_SYNC_REQUIRED=false during the coordinated rollout.
+        "x-crosaim-sync-secret": CROSAIM_BOT_SYNC_SECRET,
+        "x-crosaim-sync-key-id": "v1",
+        "x-crosaim-sync-timestamp": timestamp,
+        "x-crosaim-sync-nonce": nonce,
+        "x-crosaim-sync-body-sha256": body_hash,
+        "x-crosaim-sync-signature": signature,
+    }, serialized
 
 
 def parse_submission(message: discord.Message) -> dict[str, Any]:
@@ -172,11 +201,12 @@ async def sync_application_to_web(data: dict[str, Any], message: discord.Message
         "rank": value(data, "rango", "rank", default="Por confirmar"),
         "message": value(data, "mensaje", "message", "descripcion", "texto", default="Postulación recibida desde Discord."),
     }
+    headers, serialized = signed_sync_headers("POST", "/api/discord/applications", payload)
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{CROSAIM_WEB_BASE_URL}/api/discord/applications",
-            headers={"x-crosaim-sync-secret": CROSAIM_BOT_SYNC_SECRET},
-            json=payload,
+            headers=headers,
+            data=serialized,
             timeout=aiohttp.ClientTimeout(total=15),
         ) as response:
             if response.status >= 300:
@@ -185,17 +215,18 @@ async def sync_application_to_web(data: dict[str, Any], message: discord.Message
             return str(response_data.get("publicLookupNumber") or "") or None
 
 
-async def acknowledge_web_event(event_id: int, ok: bool, error: str | None = None) -> None:
+async def acknowledge_web_event(event_id: int, lease_token: str, ok: bool, error: str | None = None) -> None:
     if not CROSAIM_BOT_SYNC_SECRET:
         raise RuntimeError("Falta CROSAIM_BOT_SYNC_SECRET")
-    payload = {"ok": ok}
+    payload = {"ok": ok, "leaseToken": lease_token}
     if error:
         payload["error"] = error[:500]
+    headers, serialized = signed_sync_headers("POST", f"/api/discord/events/{event_id}/ack", payload)
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{CROSAIM_WEB_BASE_URL}/api/discord/events/{event_id}/ack",
-            headers={"x-crosaim-sync-secret": CROSAIM_BOT_SYNC_SECRET},
-            json=payload,
+            headers=headers,
+            data=serialized,
             timeout=aiohttp.ClientTimeout(total=15),
         ) as response:
             if response.status >= 300:
@@ -311,7 +342,7 @@ async def deliver_web_event(event: dict[str, Any]) -> None:
         channel = get_text_channel("tryouts") or get_text_channel("roster")
         if not channel:
             raise RuntimeError("No encuentro canal para avisar el tryout")
-        role_result = await assign_application_role(payload, "Tryout")
+        role_result = await assign_application_role(payload, "TRYOUT")
         await channel.send(f"🟣 **NUEVO TRYOUT EN PLANTILLA**\n{event_summary(payload)}\n**Discord:** {role_result}\n`evento:{event_id}`", allowed_mentions=discord.AllowedMentions.none())
     elif event_type in {"player_joined", "player_left", "role_updated"}:
         channel = get_text_channel("general") or get_text_channel("audit")
@@ -319,9 +350,9 @@ async def deliver_web_event(event: dict[str, Any]) -> None:
             raise RuntimeError("No encuentro un canal de comunidad para el evento")
         role_result = ""
         if event_type == "role_updated":
-            target_role = "Roster" if str(payload.get("status") or "").upper() == "ROSTER" else "Tryout" if str(payload.get("status") or "").upper() == "TRYOUT" else ""
+            target_role = "PLAYER" if str(payload.get("status") or "").upper() == "ROSTER" else "TRYOUT" if str(payload.get("status") or "").upper() == "TRYOUT" else ""
             if target_role:
-                role_result = await assign_application_role(payload, target_role, remove_roles=("Tryout",) if target_role == "Roster" else ())
+                role_result = await assign_application_role(payload, target_role, remove_roles=("TRYOUT",) if target_role == "PLAYER" else ())
         await channel.send(f"👥 **CROSAIM · {event_type.replace('_', ' ').upper()}**\n{event_summary(payload)}\n**Discord:** {role_result}\n`evento:{event_id}`", allowed_mentions=discord.AllowedMentions.none())
     elif event_type in {"tournament_created", "tournament_updated", "tournament_result"}:
         channel = get_text_channel("tournament_announcements") or get_text_channel("tournament_results")
@@ -343,10 +374,11 @@ async def poll_web_events() -> None:
     if not CROSAIM_BOT_SYNC_SECRET:
         return
     try:
+        headers, _ = signed_sync_headers("GET", "/api/discord/events")
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{CROSAIM_WEB_BASE_URL}/api/discord/events",
-                headers={"x-crosaim-sync-secret": CROSAIM_BOT_SYNC_SECRET},
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as response:
                 if response.status != 200:
@@ -355,14 +387,18 @@ async def poll_web_events() -> None:
                 events = await response.json()
         for event in events[:20]:
             event_id = int(event["id"])
+            lease_token = str(event.get("leaseToken") or "")
+            if len(lease_token) < 16:
+                logging.error("Evento web %s no tiene un lease válido; no se entrega.", event_id)
+                continue
             try:
                 await deliver_web_event(event)
-                await acknowledge_web_event(event_id, True)
+                await acknowledge_web_event(event_id, lease_token, True)
                 logging.info("Evento web %s entregado en Discord", event_id)
             except Exception as error:
                 logging.exception("No se pudo entregar evento web %s", event_id)
                 try:
-                    await acknowledge_web_event(event_id, False, str(error))
+                    await acknowledge_web_event(event_id, lease_token, False, str(error))
                 except Exception:
                     logging.exception("No se pudo confirmar fallo del evento %s", event_id)
     except Exception:
@@ -390,10 +426,8 @@ def approval_description(data: dict[str, Any]) -> str:
 
 
 def is_recruiting_staff(member: discord.Member) -> bool:
-    if member.guild_permissions.manage_guild or member.guild_permissions.manage_roles:
-        return True
-    allowed = {"staff", "admin", "moderador", "entrevistador"}
-    return any(normalize(role.name) in allowed for role in member.roles)
+    """Uses the canonical CROSAIM business-role contract for recruiting actions."""
+    return can_manage_recruiting(member)
 
 
 def submission_context(record: dict[str, Any]) -> tuple[dict[str, Any], str | None, str | None]:
@@ -418,8 +452,12 @@ def find_role_for_assignment(guild: discord.Guild, role_name: str) -> discord.Ro
     role = guild.get_role(role_id) if role_id else None
     if role:
         return role
-    aliases = {"Roster": ("roster",), "Tryout": ("tryout", "tryouts"), "Postulante": ("applicant",)}
+    aliases = {"PLAYER": ("player", "jugador", "roster"), "TRYOUT": ("tryout", "tryouts")}
     candidates = (role_name, *aliases.get(role_name, ()))
+    for spec in BUSINESS_ROLE_SPECS:
+        if normalize(spec.key) == normalize(role_name):
+            candidates = (spec.name, *spec.aliases)
+            break
     return next((item for item in guild.roles if any(normalize(item.name) == normalize(candidate) for candidate in candidates)), None)
 
 
@@ -491,7 +529,7 @@ class ReviewView(discord.ui.View):
         approval_result = assign_result = ""
         try:
             set_status(submission_id, "APROBADA", interaction.user.id, detail={"approval_message_id": str(approval_message.id)})
-            assign_result = await assign_application_role(data, "Tryout")
+            assign_result = await assign_application_role(data, "TRYOUT")
             set_status(submission_id, "TRYOUT", interaction.user.id, detail={"role_result": assign_result, "approval_message_id": str(approval_message.id)})
             approval_result = "Candidato aprobado y enviado a Tryout."
         except Exception as error:
@@ -573,9 +611,14 @@ async def on_message(message: discord.Message):
     if message.guild is None or message.guild.id != GUILD_ID or not application_channel or message.channel.id != application_channel.id:
         await bot.process_commands(message)
         return
-    # Do not reject the message merely because a webhook was regenerated.
-    if POSTULACION_WEBHOOK_ID and message.webhook_id and message.webhook_id != POSTULACION_WEBHOOK_ID:
-        logging.warning("Webhook distinto detectado (%s); se procesa porque está en el canal correcto", message.webhook_id)
+    # A channel ACL is defense in depth; the bot must also authenticate the
+    # privileged source before it writes with its Supabase service identity.
+    if not POSTULACION_WEBHOOK_ID:
+        logging.error("Postulación ignorada: falta POSTULACION_WEBHOOK_ID autorizado en la configuración.")
+        return
+    if message.webhook_id != POSTULACION_WEBHOOK_ID:
+        logging.warning("Postulación ignorada: webhook no autorizado (%s).", message.webhook_id)
+        return
     logging.info("Postulación recibida: message_id=%s webhook_id=%s", message.id, message.webhook_id)
     target = get_text_channel("review")
     if not target:

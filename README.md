@@ -26,9 +26,9 @@ Las postulaciones recibidas desde el canal configurado se sincronizan con el pan
 
 ## Configuración del servidor
 
-El comando administrativo `/crosaim setup` audita el servidor, reutiliza canales y roles equivalentes, crea solo los recursos faltantes y guarda los IDs descubiertos en `CROSAIM_RUNTIME_CONFIG_PATH`. Ejecutarlo dos veces no duplica canales. `/crosaim status` muestra los permisos, recursos faltantes y el estado de la configuración.
+El comando administrativo `/crosaim plan` muestra la reconciliación propuesta antes de cambiar Discord. `/crosaim setup` crea y normaliza únicamente los recursos CROSAIM que puede resolver sin ambigüedad; no elimina ni fusiona recursos. `/crosaim status` muestra permisos, jerarquía, drift y salud del registro persistido. Consulta [DISCORD_OPERATIONS.md](DISCORD_OPERATIONS.md) para la matriz de los nueve roles, los permisos mínimos, el orden seguro de ejecución y la política no destructiva.
 
-El directorio elegido para `CROSAIM_RUNTIME_CONFIG_PATH` debe pertenecer a un volumen persistente del proveedor de ejecución. El bot requiere **Gestionar canales**, **Gestionar roles** y **Mover miembros** para ejecutar por completo setup, roles automáticos y entrevistas; no requiere Administrator.
+El directorio elegido para `CROSAIM_RUNTIME_CONFIG_PATH` debe pertenecer a un volumen persistente del proveedor de ejecución. El bot requiere **Gestionar canales**, **Gestionar roles**, **Mover miembros**, **Enviar mensajes**, **Insertar enlaces**, **Adjuntar archivos**, **Ver canales** y **Leer el historial de mensajes**; no requiere y no debe tener `Administrator`.
 
 Antes de desplegar la actualización, ejecutar `supabase_migration_application_state.sql` en Supabase. Esa migración incorpora los siete estados operativos, timestamps y la tabla de auditoría sin exponer secretos.
 

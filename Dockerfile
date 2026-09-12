@@ -7,6 +7,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN mkdir -p media/generated
+RUN mkdir -p media/generated data
+VOLUME ["/app/data"]
 
 CMD ["python", "bot.py"]
