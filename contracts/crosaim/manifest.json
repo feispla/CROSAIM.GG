@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract": "crosaim-web-discord",
+  "version": "1.0.0",
+  "status": "initial",
+  "owners": ["crosaim-control-center", "Crosaim.botdiscord"],
+  "schemas": {
+    "content_compliance": "content_compliance.schema.json",
+    "sync_event": "sync_event.schema.json"
+  },
+  "compatibility": {
+    "eventEnvelope": "sync_event.schema.json",
+    "unknownEventTypes": "reject",
+    "unknownProperties": "reject",
+    "versioning": "semver"
+  }
+}
