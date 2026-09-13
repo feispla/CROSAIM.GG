@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crosaim.dev/contracts/v1/application_sync.schema.json",
+  "title": "CROSAIM Discord Application Sync",
+  "description": "Payload que el bot envía al endpoint de postulaciones del panel.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "discordMessageId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "discordUsername": { "type": "string", "minLength": 2, "maxLength": 120 },
+    "discordUserId": { "type": ["string", "null"], "pattern": "^[0-9]{5,32}$" },
+    "playerName": { "type": "string", "minLength": 2, "maxLength": 120 },
+    "contact": { "type": ["string", "null"], "maxLength": 180 },
+    "role": { "type": "string", "minLength": 2, "maxLength": 80 },
+    "rank": { "type": "string", "minLength": 2, "maxLength": 80 },
+    "message": { "type": "string", "minLength": 2, "maxLength": 4000 },
+    "region": { "type": ["string", "null"], "maxLength": 80 },
+    "availability": { "type": ["string", "null"], "maxLength": 160 },
+    "socials": { "$ref": "#/$defs/socials" }
+  },
+  "required": ["discordMessageId", "discordUsername", "playerName", "role", "rank", "message"],
+  "$defs": {
+    "socials": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "twitch": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "youtube": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "twitter": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "tiktok": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 }
+      }
+    }
+  }
+}

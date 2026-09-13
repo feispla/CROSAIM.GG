@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crosaim.dev/contracts/v1/sync_event.schema.json",
+  "title": "CROSAIM Web Discord Sync Event",
+  "description": "Sobre común para eventos publicados por el panel y consumidos por el bot.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": ["integer", "string"] },
+    "eventType": {
+      "type": "string",
+      "enum": ["application_submitted", "application_created", "application_review", "application_interview", "application_approved", "application_rejected", "profile_updated", "player_profile_updated", "clip_uploaded", "roster_tryout", "player_joined", "player_left", "role_updated", "tournament_created", "tournament_updated", "tournament_result", "system_error", "sync_error"]
+    },
+    "contractVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "source": { "type": "string", "enum": ["web", "discord", "system"] },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "correlationId": { "type": "string", "maxLength": 128 },
+    "dedupeKey": { "type": "string", "maxLength": 180 },
+    "leaseToken": { "type": "string", "maxLength": 128 },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": { "type": "string", "maxLength": 128 },
+        "profileId": { "type": "string", "maxLength": 128 },
+        "playerName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "discordUserId": { "type": ["string", "null"], "pattern": "^[0-9]{5,32}$" },
+        "discordUsername": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 80 },
+        "rank": { "type": "string", "maxLength": 80 },
+        "region": { "type": "string", "maxLength": 80 },
+        "availability": { "type": "string", "maxLength": 160 },
+        "status": { "type": "string", "maxLength": 80 },
+        "message": { "type": "string", "maxLength": 4000 },
+        "bio": { "type": "string", "maxLength": 4000 },
+        "description": { "type": "string", "maxLength": 4000 },
+        "title": { "type": "string", "maxLength": 180 },
+        "detail": { "type": "string", "maxLength": 4000 },
+        "name": { "type": "string", "maxLength": 180 },
+        "url": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "photoUrl": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "foto_url": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "size": { "type": "number", "minimum": 0 },
+        "publicLookupNumber": { "type": ["string", "null"], "maxLength": 64 },
+        "profileVersion": { "type": "integer", "minimum": 1 },
+        "socials": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "twitch": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+            "youtube": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+            "twitter": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+            "tiktok": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 }
+          }
+        },
+        "redesSociales": { "$ref": "#/$defs/socials" },
+        "error": { "type": "string", "maxLength": 2000 },
+        "violates": { "type": "boolean" },
+        "violation_categories": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "violation_reason": { "type": "string", "maxLength": 2000 }
+      }
+    }
+  },
+  "required": ["eventType", "payload"],
+  "$defs": {
+    "socials": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "twitch": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "youtube": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "twitter": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+        "tiktok": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 }
+      }
+    }
+  }
+}
